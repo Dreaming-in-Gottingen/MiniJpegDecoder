@@ -60,6 +60,17 @@ struct jpegParam {
     int  CrDC_last;
 };
 
+static const uint8_t zigzag[64] =
+{
+   0,  1,  5,  6, 14, 15, 27, 28,
+   2,  4,  7, 13, 16, 26, 29, 42,
+   3,  8, 12, 17, 25, 30, 41, 43,
+   9, 11, 18, 24, 31, 40, 44, 53,
+  10, 19, 23, 32, 39, 45, 52, 54,
+  20, 22, 33, 38, 46, 51, 55, 60,
+  21, 34, 37, 47, 50, 56, 59, 61,
+  35, 36, 48, 49, 57, 58, 62, 63
+};
 
 int parseApp0(ABitReader* abr, struct jpegParam* param)
 {
@@ -76,9 +87,16 @@ int parseDQT(ABitReader* abr, struct jpegParam* param)
     int len = abr->getBits(16);
     int idx = abr->getBits(8) & 0x0f;
     param->pQT[idx] = (uint8_t*)malloc(64);
-    uint8_t *ptr = param->pQT[idx];
     memcpy(param->pQT[idx], abr->data(), 64);
     abr->skipBits(64*8);
+    int i,j;
+    uint8_t *ptr = param->pQT[idx];
+    for (i=0; i<8; i++) {
+        for (j=0; j<8; j++) {
+            printf("%d  ", *ptr++);
+        }
+        puts("");
+    }
 
     return 0;
 }
@@ -348,6 +366,7 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
     return 0;
 }
 
+// IDPCM + IRLC
 //color: 0-Y; 1-CbCr
 int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, int *block)
 {
@@ -402,6 +421,7 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
     }
 
     //dump block
+    puts("----after huffman decode----");
     for (i=0; i<8; i++) {
         for (int j=0; j<8; j++) {
             printf("%4d  ", *block++);
@@ -413,12 +433,45 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
     return 0;
 }
 
-// IRLC + IZigzag + IDPCM + ISQ + IDCT
+// IQS
+int JpegDequantization(struct ABitReader *abr, struct jpegParam *param, int *ptr_block)
+{
+    int color_id = param->cur_type==0 ? 0:1;
+    uint8_t *pQT = param->pQT[color_id];
+    puts("----after dequantization----");
+    for (int i=0; i<64; i++) {
+        ptr_block[i] *= pQT[zigzag[i]];
+        printf("%4d  ", ptr_block[i]);
+        if (i % 8 == 7)
+            puts("");
+    }
+    puts("");
+
+    return 0;
+}
+
+// IZigZag
+int JpegReZigZag(struct ABitReader *abr, struct jpegParam *param, int *dst_block, const int *src_block)
+{
+    puts("----after rezigzag----");
+    for (int i=0; i<64; i++) {
+        dst_block[i] = src_block[zigzag[i]];
+        printf("%4d  ", dst_block[i]);
+        if (i % 8 == 7)
+            puts("");
+    }
+    puts("");
+
+    return 0;
+}
+
+// IDPCM + IRLC + IQS + IZigzag + IDCT
 int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 {
     int width, height;
-    int block[8][8];
-    memset(&block, 0, 64*4);
+    int block1[8][8];
+    int block2[8][8];
+    memset(&block1, 0, 64*4);
 
     off64_t file_sz;
     fs->getSize(&file_sz);
@@ -427,17 +480,30 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     struct ABitReader abr(buf, file_sz);
 
     int i,j;
-    for (i=0; i<20; i++) {
+    int *pos1 = &block1[0][0];
+    int *pos2 = &block2[0][0];
+    for (i=0; i<3; i++) {
         printf("------------------block(0,%d)----------------------\n", i);
         param->cur_type = 0;
         param->YDC_dpcm = i;
-        RebuildMCU1X1(&abr, param, 0, &block[0][0]);
+        puts("--------Y--------");
+        RebuildMCU1X1(&abr, param, 0, &block1[0][0]);
+        JpegDequantization(&abr, param, &block1[0][0]);
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
+
         param->cur_type = 1;
         param->CbDC_dpcm = i;
-        RebuildMCU1X1(&abr, param, 1, &block[0][0]);
+        puts("--------Cb--------");
+        RebuildMCU1X1(&abr, param, 1, &block1[0][0]);
+        JpegDequantization(&abr, param, &block1[0][0]);
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
+
         param->cur_type = 2;
         param->CrDC_dpcm = i;
-        RebuildMCU1X1(&abr, param, 1, &block[0][0]);
+        puts("--------Cr--------");
+        RebuildMCU1X1(&abr, param, 1, &block1[0][0]);
+        JpegDequantization(&abr, param, &block1[0][0]);
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
     }
 
     free(buf);
