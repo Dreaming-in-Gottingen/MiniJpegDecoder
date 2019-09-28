@@ -47,8 +47,17 @@ struct jpegParam {
     uint8_t qt_id[3];       //Quantization table destination selector
 
     //SOS
-    uint8_t ht_comp_id[3];   //1-Y, 2-Cb, 3-Cr
-    uint8_t ht_idx[3];   //0xAB -> A: DC huffman table idx; B: AC huffman table idx.
+    uint8_t ht_comp_id[3];  //1-Y, 2-Cb, 3-Cr
+    uint8_t ht_idx[3];      //0xAB -> A: DC huffman table idx; B: AC huffman table idx.
+
+    //huffman decode intermediate values
+    int  cur_type;          //0-Y; 1-Cb; 2-Cr
+    bool YDC_dpcm;          //0-first block; 1-others
+    int  YDC_last;
+    bool CbDC_dpcm;
+    int  CbDC_last;
+    bool CrDC_dpcm;
+    int  CrDC_last;
 };
 
 
@@ -310,7 +319,7 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
                     //} else if (code_val==0x00) { // EOB: all of below coefficient is 0
                         *freq = 0; //none sense
                         *coef = 0;
-                        return 1;  //note this ret!
+                        return 1;  //careful for this ret, it means EOB!
                     } else {
                         int coef_bw = *pCodeVal & 0x0f;
                         if (code_val >> (coef_bw-1)) {    //  MSB(Most Significant Bit) = 1
@@ -340,23 +349,66 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
 }
 
 //color: 0-Y; 1-CbCr
-int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color)
+int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, int *block)
 {
-    int block[8][8];
+    int *ptr = block;
+    memset(ptr, 0, 8*8*4);
 
     int cnt, coef;
 
     //DC
     int ret = HuffmanDecode(abr, param, color, 0, &cnt, &coef);
-    printf("(%d)\n", coef);
+    int extra;
+    switch (param->cur_type) {
+        case 0:
+            extra = param->YDC_dpcm==0? 0:param->YDC_last;
+            coef +=extra;
+            param->YDC_last = coef;
+            break;
+        case 1:
+            extra = param->CbDC_dpcm==0? 0:param->CbDC_last;
+            coef +=extra;
+            param->CbDC_last = coef;
+            break;
+        case 2:
+            extra = param->CrDC_dpcm==0? 0:param->CrDC_last;
+            coef +=extra;
+            param->CrDC_last = coef;
+            break;
+        default:
+            TRESPASS();
+            break;
+    }
+    *ptr++ = coef;
+    //printf("(%d)\n", coef);
+
     //AC
-    for (int i=1; i<64; i++) {
+    int i;
+    for (i=1; i<64; i++) {
         ret = HuffmanDecode(abr, param, color, 1, &cnt, &coef);
-        printf("(%d, %d)\n", cnt, coef);
+        //printf("(%d, %d)\n", cnt, coef);
+        while(cnt--) {
+            *ptr++ = 0;
+        }
+        *ptr++ = coef;
+
         if (ret == 1) {
             break;
         }
     }
+    if (i==64) {
+        puts("Oops! somethings go wrong!");
+        TRESPASS();
+    }
+
+    //dump block
+    for (i=0; i<8; i++) {
+        for (int j=0; j<8; j++) {
+            printf("%4d  ", *block++);
+        }
+        puts("");
+    }
+    puts("");
 
     return 0;
 }
@@ -365,6 +417,8 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color)
 int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 {
     int width, height;
+    int block[8][8];
+    memset(&block, 0, 64*4);
 
     off64_t file_sz;
     fs->getSize(&file_sz);
@@ -372,35 +426,19 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     fs->readAt(offset, buf, file_sz);
     struct ABitReader abr(buf, file_sz);
 
-    puts("------------------(0,0)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
-
-    puts("------------------(0,1)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
-
-    puts("------------------(0,2)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
-
-    puts("------------------(0,3)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
-
-    puts("------------------(0,4)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
-
-    puts("------------------(0,5)----------------------");
-    RebuildMCU1X1(&abr, param, 0);
-    RebuildMCU1X1(&abr, param, 1);
-    RebuildMCU1X1(&abr, param, 1);
+    int i,j;
+    for (i=0; i<20; i++) {
+        printf("------------------block(0,%d)----------------------\n", i);
+        param->cur_type = 0;
+        param->YDC_dpcm = i;
+        RebuildMCU1X1(&abr, param, 0, &block[0][0]);
+        param->cur_type = 1;
+        param->CbDC_dpcm = i;
+        RebuildMCU1X1(&abr, param, 1, &block[0][0]);
+        param->cur_type = 2;
+        param->CrDC_dpcm = i;
+        RebuildMCU1X1(&abr, param, 1, &block[0][0]);
+    }
 
     free(buf);
 
