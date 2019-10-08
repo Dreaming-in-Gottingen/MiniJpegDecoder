@@ -368,7 +368,7 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
 
 // IDPCM + IRLC
 //color: 0-Y; 1-CbCr
-int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, int *block)
+int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, int *block, bool dump)
 {
     int *ptr = block;
     memset(ptr, 0, 8*8*4);
@@ -421,56 +421,151 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
     }
 
     //dump block
-    puts("----after huffman decode----");
-    for (i=0; i<8; i++) {
-        for (int j=0; j<8; j++) {
-            printf("%4d  ", *block++);
+    if (dump) {
+        puts("----after huffman decode----");
+        for (i=0; i<8; i++) {
+            for (int j=0; j<8; j++) {
+                printf("%4d  ", *block++);
+            }
+            puts("");
         }
         puts("");
     }
-    puts("");
 
     return 0;
 }
 
 // IQS
-int JpegDequantization(struct ABitReader *abr, struct jpegParam *param, int *ptr_block)
+int JpegDequantization(struct ABitReader *abr, struct jpegParam *param, int *ptr_block, bool dump)
 {
     int color_id = param->cur_type==0 ? 0:1;
     uint8_t *pQT = param->pQT[color_id];
-    puts("----after dequantization----");
     for (int i=0; i<64; i++) {
-        ptr_block[i] *= pQT[zigzag[i]];
-        printf("%4d  ", ptr_block[i]);
-        if (i % 8 == 7)
-            puts("");
+        ptr_block[i] *= pQT[i];
     }
-    puts("");
+
+    if (dump) {
+        puts("----after dequantization----");
+        for (int i=0; i<64; i++) {
+            printf("%4d  ", ptr_block[i]);
+            if (i % 8 == 7)
+                puts("");
+        }
+        puts("");
+    }
 
     return 0;
 }
 
 // IZigZag
-int JpegReZigZag(struct ABitReader *abr, struct jpegParam *param, int *dst_block, const int *src_block)
+int JpegReZigZag(struct ABitReader *abr, struct jpegParam *param, int *dst_block, const int *src_block, bool dump)
 {
-    puts("----after rezigzag----");
     for (int i=0; i<64; i++) {
         dst_block[i] = src_block[zigzag[i]];
-        printf("%4d  ", dst_block[i]);
-        if (i % 8 == 7)
-            puts("");
     }
-    puts("");
+
+    if (dump) {
+        puts("----after rezigzag----");
+        for (int i=0; i<64; i++) {
+            printf("%4d  ", dst_block[i]);
+            if (i % 8 == 7)
+                puts("");
+        }
+        puts("");
+    }
 
     return 0;
 }
 
-// IDPCM + IRLC + IQS + IZigzag + IDCT
+int IDCT2(float (*dst)[8], int (*block)[8], bool dump)
+{
+    float trans_matrix[8][8] = {
+        {0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,},
+        {0.4904,    0.4157,    0.2778,    0.0975,   -0.0975,   -0.2778,   -0.4157,   -0.4904,},
+        {0.4619,    0.1913,   -0.1913,   -0.4619,   -0.4619,   -0.1913,    0.1913,    0.4619,},
+        {0.4157,   -0.0975,   -0.4904,   -0.2778,    0.2778,    0.4904,    0.0975,   -0.4157,},
+        {0.3536,   -0.3536,   -0.3536,    0.3536,    0.3536,   -0.3536,   -0.3536,    0.3536,},
+        {0.2778,   -0.4904,    0.0975,    0.4157,   -0.4157,   -0.0975,    0.4904,   -0.2778,},
+        {0.1913,   -0.4619,    0.4619,   -0.1913,   -0.1913,    0.4619,   -0.4619,    0.1913,},
+        {0.0975,   -0.2778,    0.4157,   -0.4904,    0.4904,   -0.4157,    0.2778,   -0.0975,},
+    };
+
+    float tmp[8][8];
+
+    float t=0;
+    int i,j,k;
+    for(i=0;i<8;i++)  //same as A'*I
+	{
+        for(j=0;j<8;j++)
+		{
+            t = 0;
+            for(k=0; k<8; k++)
+			{
+                t += trans_matrix[k][i] * block[k][j]; //trans_matrix's ith column * block's jth column
+			}
+            tmp[i][j] = t;
+        }
+    }
+
+    for(i=0; i<8; i++)  //same as tmp*A
+	{
+        for(j=0; j<8; j++)
+		{
+            t=0;
+            for(k=0; k<8; k++)
+			{
+                t += tmp[i][k] * trans_matrix[k][j];
+			}
+            dst[i][j] = t;
+        }
+    }
+
+    if (dump) {
+        puts("----after idct2----");
+        for (i=0; i<8; i++) {
+            for (j=0; j<8; j++) {
+                printf("%3.4f  ", dst[i][j]);
+            }
+            puts("");
+        }
+        puts("");
+    }
+
+    return 0;
+}
+
+// ILevelOffset
+int JpegReLevelOffset(float (*block)[8], bool dump)
+{
+    int i, j;
+
+    for (i=0; i<8; i++) {
+        for (j=0; j<8; j++) {
+            block[i][j] += 128;
+        }
+    }
+
+    if (dump) {
+        puts("----after ileveloffset----");
+        for (i=0; i<8; i++) {
+            for (j=0; j<8; j++) {
+                printf("%3.4f  ", block[i][j]);
+            }
+            puts("");
+        }
+        puts("");
+    }
+
+    return 0;
+}
+
+// IDPCM + IRLC + IQS + IZigzag + IDCT + ILevelOffset
 int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 {
     int width, height;
     int block1[8][8];
     int block2[8][8];
+    float dst[8][8];
     memset(&block1, 0, 64*4);
 
     off64_t file_sz;
@@ -482,28 +577,35 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
-    for (i=0; i<3; i++) {
+    j = 50;
+    for (i=0; i<j; i++) {
         printf("------------------block(0,%d)----------------------\n", i);
         param->cur_type = 0;
         param->YDC_dpcm = i;
         puts("--------Y--------");
-        RebuildMCU1X1(&abr, param, 0, &block1[0][0]);
-        JpegDequantization(&abr, param, &block1[0][0]);
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
+        RebuildMCU1X1(&abr, param, 0, &block1[0][0], i==j-1?true:false);               //IDPCM + IRLC
+        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);             //IQS
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);    //IZigZag
+        IDCT2(&dst[0], &block2[0], i==j-1?true:false);                                 //IDCT
+        JpegReLevelOffset(&dst[0], i==j-1?true:false);                                 //ILevelOffset
 
         param->cur_type = 1;
         param->CbDC_dpcm = i;
         puts("--------Cb--------");
-        RebuildMCU1X1(&abr, param, 1, &block1[0][0]);
-        JpegDequantization(&abr, param, &block1[0][0]);
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
+        RebuildMCU1X1(&abr, param, 1, &block1[0][0], i==j-1?true:false);
+        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);
+        IDCT2(&dst[0], &block2[0], i==j-1?true:false);
+        JpegReLevelOffset(&dst[0], i==j-1?true:false);
 
         param->cur_type = 2;
         param->CrDC_dpcm = i;
         puts("--------Cr--------");
-        RebuildMCU1X1(&abr, param, 1, &block1[0][0]);
-        JpegDequantization(&abr, param, &block1[0][0]);
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0]);
+        RebuildMCU1X1(&abr, param, 1, &block1[0][0], i==j-1?true:false);
+        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);
+        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);
+        IDCT2(&dst[0], &block2[0], i==j-1?true:false);
+        JpegReLevelOffset(&dst[0], i==j-1?true:false);
     }
 
     free(buf);
