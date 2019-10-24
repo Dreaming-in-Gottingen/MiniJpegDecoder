@@ -93,7 +93,7 @@ void ABitReader::putBits(uint32_t x, size_t n) {
     mNumBitsLeft += n;
 }
 
-size_t ABitReader::numBitsLeft() const {
+size_t ABitReader::numBitsLeftInTotal() const {
     return mSize * 8 + mNumBitsLeft;
 }
 

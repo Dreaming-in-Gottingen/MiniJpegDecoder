@@ -31,7 +31,11 @@ struct ABitReader {
 
     void putBits(uint32_t x, size_t n);
 
-    size_t numBitsLeft() const;
+    size_t numBitsLeftInTotal() const;
+
+    size_t numBitsLeftInPart() const {
+        return mNumBitsLeft;
+    };
 
     const uint8_t *data() const;
 

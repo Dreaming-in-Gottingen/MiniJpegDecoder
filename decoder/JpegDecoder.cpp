@@ -91,12 +91,14 @@ int parseDQT(ABitReader* abr, struct jpegParam* param)
     abr->skipBits(64*8);
     int i,j;
     uint8_t *ptr = param->pQT[idx];
+    printf("\tQuantization table for color_id(%d):\t", idx);
     for (i=0; i<8; i++) {
+        printf("\n\t");
         for (j=0; j<8; j++) {
-            printf("%d  ", *ptr++);
+            printf("%2d  ", *ptr++);
         }
-        puts("");
     }
+    puts("\n\t---------------------------------------------------------------------------------------------");
 
     return 0;
 }
@@ -114,7 +116,7 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
     uint8_t *pCodeCnt = (uint8_t*)malloc(16);
     int i, j;
     int total_code_cnt = 0;
-    printf("\tCodeCnt:\t");
+    printf("\tCodeCntOfNBits:\t");
     for (i=0; i<16; i++) {
         int code_cnt = abr->getBits(8);
         pCodeCnt[i] = code_cnt;
@@ -127,7 +129,7 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
 
     uint8_t *pWidth = (uint8_t *)malloc(total_code_cnt);
     param->pHTCodeWidth[idx_high][idx_low] = pWidth;
-    printf("\n\tCodeWidth:\t");
+    printf("\n\tValidCodeWidth:\t");
     for (i=0, j=0; i<16; i++, j=0) {
         while (j++ < pCodeCnt[i]) {
             uint8_t tmp = *pWidth++ = i+1;
@@ -174,13 +176,14 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
         *pCodeVal++ = abr->getBits(8);
     }
 
-    printf("\t-----------------huffman table: [%d][%d]----[ith] (CodeWidth, Code) -> CodeVal-----------------\n", idx_high, idx_low);
+    printf("\t-----------------huffman table: [%d][%d]---------------------\n", idx_high, idx_low);
 
     pWidth = param->pHTCodeWidth[idx_high][idx_low];
     pCode = param->pHTCode[idx_high][idx_low];
     pCodeVal = param->pHTCodeVal[idx_high][idx_low];
+    puts("\t[SequenceNum] (CodeWidth,   Code) -> CodeVal");
     for (i=0; i<total_code_cnt; i++) {
-        printf("\t[%2d] (%2d, %#x) -> %#x\n", i, *pWidth++, *pCode++, *pCodeVal++);
+        printf("\t[%11d] (%9d, %#6x) -> %#7x\n", i, *pWidth++, *pCode++, *pCodeVal++);
     }
     puts("\t---------------------------------------------------------------------------------------------");
 
@@ -195,7 +198,7 @@ int parseSOF(ABitReader* abr, struct jpegParam* param)
     param->bit_width = abr->getBits(8);
     param->height = abr->getBits(16);
     param->width = abr->getBits(16);
-    printf("\tres=> (%d x %d)\n", param->width, param->height);
+    printf("\tpic resolution => (%d x %d)\n", param->width, param->height);
     param->comp_cnt = abr->getBits(8);
     int cnt = 0;
     while (cnt < param->comp_cnt) {
@@ -295,10 +298,13 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
     uint16_t *pCode = param->pHTCode[idx][color];
     uint8_t *pCodeVal = param->pHTCodeVal[idx][color];
 
+    //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
+
     int i = 1;
     while (i < 16 ) {
         if (pCodeCnt[i] != 0) {
             uint16_t code=abr->getBits(i+1);
+            //printf("i:%d, CodeCnt:%d, code:%#x\n", i, pCodeCnt[i], code);
             bool find = true;
             int cnt = 0;
             while (*pCode++ != code) {
@@ -361,6 +367,8 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
         } // if (pCodeCnt[i] != 0)
         i++;
     }
+
+    printf("fatal error! huffman decode failed! i=%d\n", i);
     TRESPASS();
 
     return 0;
@@ -559,6 +567,18 @@ int JpegReLevelOffset(float (*block)[8], bool dump)
     return 0;
 }
 
+int JpegCopyYUV(uint8_t (*dst)[8], float (*src)[8], bool dump)
+{
+    int i,j;
+    for (i=0; i<8; i++) {
+        for (j=0; j<8; j++) {
+            dst[i][j] = (uint8_t)src[i][j];
+        }
+    }
+
+    return 0;
+}
+
 // IDPCM + IRLC + IQS + IZigzag + IDCT + ILevelOffset
 int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 {
@@ -566,6 +586,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int block1[8][8];
     int block2[8][8];
     float dst[8][8];
+    uint8_t yuv[8][8];
     memset(&block1, 0, 64*4);
 
     off64_t file_sz;
@@ -577,35 +598,37 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
-    j = 50;
-    for (i=0; i<j; i++) {
-        printf("------------------block(0,%d)----------------------\n", i);
-        param->cur_type = 0;
-        param->YDC_dpcm = i;
-        puts("--------Y--------");
-        RebuildMCU1X1(&abr, param, 0, &block1[0][0], i==j-1?true:false);               //IDPCM + IRLC
-        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);             //IQS
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);    //IZigZag
-        IDCT2(&dst[0], &block2[0], i==j-1?true:false);                                 //IDCT
-        JpegReLevelOffset(&dst[0], i==j-1?true:false);                                 //ILevelOffset
+    for (i=0; i<1; i++) {
+        for (j=0; j<128; j++) {
+            printf("------------------block(%d,%d)----------------------\n", i, j);
+            param->cur_type = 0;
+            param->YDC_dpcm = j;
+            puts("--------Y--------");
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], 0);               //IDPCM + IRLC
+            JpegDequantization(&abr, param, &block1[0][0], 0);             //IQS
+            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);    //IZigZag
+            IDCT2(&dst[0], &block2[0], 0);                                 //IDCT
+            JpegReLevelOffset(&dst[0], 0);                                 //ILevelOffset
+            JpegCopyYUV(&yuv[0], &dst[0], 0);
 
-        param->cur_type = 1;
-        param->CbDC_dpcm = i;
-        puts("--------Cb--------");
-        RebuildMCU1X1(&abr, param, 1, &block1[0][0], i==j-1?true:false);
-        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);
-        IDCT2(&dst[0], &block2[0], i==j-1?true:false);
-        JpegReLevelOffset(&dst[0], i==j-1?true:false);
+            param->cur_type = 1;
+            param->CbDC_dpcm = j;
+            puts("--------Cb--------");
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 0);
+            //JpegDequantization(&abr, param, &block1[0][0], 0);
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
+            //IDCT2(&dst[0], &block2[0], 0);
+            //JpegReLevelOffset(&dst[0], 0);
 
-        param->cur_type = 2;
-        param->CrDC_dpcm = i;
-        puts("--------Cr--------");
-        RebuildMCU1X1(&abr, param, 1, &block1[0][0], i==j-1?true:false);
-        JpegDequantization(&abr, param, &block1[0][0], i==j-1?true:false);
-        JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], i==j-1?true:false);
-        IDCT2(&dst[0], &block2[0], i==j-1?true:false);
-        JpegReLevelOffset(&dst[0], i==j-1?true:false);
+            param->cur_type = 2;
+            param->CrDC_dpcm = j;
+            puts("--------Cr--------");
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 0);
+            //JpegDequantization(&abr, param, &block1[0][0], 0);
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
+            //IDCT2(&dst[0], &block2[0], 0);
+            //JpegReLevelOffset(&dst[0], 0;
+        }
     }
 
     free(buf);
