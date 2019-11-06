@@ -23,6 +23,10 @@ using namespace codec_utils;
 #define DHT 0xFFC4      //Define Huffman table(s)
 #define SOS 0xFFDA      //Start of scan
 
+enum {
+    EOB = 1,
+};
+
 
 struct jpegParam {
 
@@ -300,18 +304,50 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
 
     //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
 
+    bool skip_flag = false;
+    int left_bits = abr->numBitsLeftInPart()%8;
+    int skip_cnt = 0;
+    if(*abr->data() == 0xff) {
+        printf("find 0xff, need skip 0x00 below! left_bits:%d\n", left_bits);
+        skip_flag = true;
+    }
     int i = 1;
-    while (i < 16 ) {
+    uint16_t code_high = 0;
+    uint16_t code_low = 0;
+    while (i < 16) {
         if (pCodeCnt[i] != 0) {
-            uint16_t code=abr->getBits(i+1);
-            //printf("i:%d, CodeCnt:%d, code:%#x\n", i, pCodeCnt[i], code);
+            uint16_t code = 0;
+            if (!skip_flag) {
+                code = abr->getBits(i+1);
+            } else {
+                if (i+1 < left_bits) {
+                    code = abr->getBits(i+1);
+                } else if (i+1 == left_bits) {
+                    code = code_high = abr->getBits(left_bits);
+                    CHECK_EQ(0x00, abr->getBits(8));
+                } else if (i+1 > left_bits){
+                    code_low = abr->getBits(++skip_cnt);
+                    code = (code_high<<skip_cnt) + code_low;
+                    printf("skip_cnt:%d, code:%#x, high_low(%#x, %#x)\n", skip_cnt, code, code_high, code_low);
+                }
+            }
+            //printf("i:%d, CodeCnt:%d, code:%#x, left_bits:%d\n", i, pCodeCnt[i], code, abr->numBitsLeftInPart());
             bool find = true;
             int cnt = 0;
             while (*pCode++ != code) {
                 pCodeVal++;
                 if (++cnt == pCodeCnt[i]) {
                     find = false;
-                    abr->putBits(code, i+1);
+                    if (!skip_flag) {
+                        abr->putBits(code, i+1);
+                    } else {
+                        if (i+1 < left_bits) {
+                            abr->putBits(code, i+1);
+                        } else if (i+1 == left_bits) {
+                        } else if (i+1 > left_bits) {
+                            abr->putBits(code_low, i+1-left_bits);
+                        }
+                    }
                     //printf("  discard code-bit-width:%d, for we have foreached to the end:%d\n", i+1, cnt);
                     break;
                 }
@@ -343,7 +379,7 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
                     //} else if (code_val==0x00) { // EOB: all of below coefficient is 0
                         *freq = 0; //none sense
                         *coef = 0;
-                        return 1;  //careful for this ret, it means EOB!
+                        return EOB;  //careful for this ret, it means EOB!
                     } else {
                         int coef_bw = *pCodeVal & 0x0f;
                         if (code_val >> (coef_bw-1)) {    //  MSB(Most Significant Bit) = 1
@@ -419,7 +455,7 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
         }
         *ptr++ = coef;
 
-        if (ret == 1) {
+        if (ret == EOB) {
             break;
         }
     }
@@ -598,23 +634,23 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
-    for (i=0; i<1; i++) {
+    for (i=0; i<10; i++) {
         for (j=0; j<128; j++) {
             printf("------------------block(%d,%d)----------------------\n", i, j);
             param->cur_type = 0;
             param->YDC_dpcm = j;
-            puts("--------Y--------");
-            RebuildMCU1X1(&abr, param, 0, &block1[0][0], 0);               //IDPCM + IRLC
-            JpegDequantization(&abr, param, &block1[0][0], 0);             //IQS
-            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);    //IZigZag
-            IDCT2(&dst[0], &block2[0], 0);                                 //IDCT
-            JpegReLevelOffset(&dst[0], 0);                                 //ILevelOffset
-            JpegCopyYUV(&yuv[0], &dst[0], 0);
+            //puts("--------Y--------");
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], 1);               //IDPCM + IRLC
+            //JpegDequantization(&abr, param, &block1[0][0], 0);             //IQS
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);    //IZigZag
+            //IDCT2(&dst[0], &block2[0], 0);                                 //IDCT
+            //JpegReLevelOffset(&dst[0], 0);                                 //ILevelOffset
+            //JpegCopyYUV(&yuv[0], &dst[0], 0);
 
             param->cur_type = 1;
             param->CbDC_dpcm = j;
-            puts("--------Cb--------");
-            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 0);
+            //puts("--------Cb--------");
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 1);
             //JpegDequantization(&abr, param, &block1[0][0], 0);
             //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
             //IDCT2(&dst[0], &block2[0], 0);
@@ -622,8 +658,8 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 
             param->cur_type = 2;
             param->CrDC_dpcm = j;
-            puts("--------Cr--------");
-            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 0);
+            //puts("--------Cr--------");
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 1);
             //JpegDequantization(&abr, param, &block1[0][0], 0);
             //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
             //IDCT2(&dst[0], &block2[0], 0);
