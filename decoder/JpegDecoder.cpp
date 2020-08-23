@@ -1,6 +1,7 @@
 #include <iostream>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 
 #include "AString.h"
@@ -78,7 +79,7 @@ static const uint8_t zigzag[64] =
 
 int parseApp0(ABitReader* abr, struct jpegParam* param)
 {
-    printf("(%s : %d), offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    printf("(%s : %d), App0 offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
     abr->skipBits(len*8 - 16);
 
@@ -87,7 +88,7 @@ int parseApp0(ABitReader* abr, struct jpegParam* param)
 
 int parseDQT(ABitReader* abr, struct jpegParam* param)
 {
-    printf("(%s : %d), offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    printf("(%s : %d), DQT offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
     int idx = abr->getBits(8) & 0x0f;
     param->pQT[idx] = (uint8_t*)malloc(64);
@@ -110,16 +111,21 @@ int parseDQT(ABitReader* abr, struct jpegParam* param)
 //rebuild huffman table
 int parseDHT(ABitReader* abr, struct jpegParam* param)
 {
-    printf("(%s : %d), offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    printf("(%s : %d), DHT offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
     uint8_t idx = abr->getBits(8);
     uint8_t idx_high = idx>>4;
     uint8_t idx_low = idx & 0x0f;
 
+    //idx_hight represent DC or AC: 0-DC, 1-AC
+    //idx_low represent color id: 0-Y, 1-uv
+    //[0][x] -- DC table, [0][0]:DC0, [0][1]:DC1
+    //[1][x] -- AC table, [1][0]:AC0, [1][1]:AC1
     //generate pHTCodeCnt[idx_high][idx_low]
     uint8_t *pCodeCnt = (uint8_t*)malloc(16);
     int i, j;
     int total_code_cnt = 0;
+    printf("\ttable id: [%d][%d]--[%s%d], dump more detail info...\n", idx_high, idx_low, idx_high==0?"DC":"AC", idx_low);
     printf("\tCodeCntOfNBits:\t");
     for (i=0; i<16; i++) {
         int code_cnt = abr->getBits(8);
@@ -127,13 +133,13 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
         total_code_cnt += code_cnt;
         printf("%2d  ", code_cnt);
     }
-    //printf("\n\ttotal code cnt: %d\n", total_code_cnt);
+    printf("\n\ttotal code cnt: %d\n", total_code_cnt);
     param->HTCodeRealCnt[idx_high][idx_low] = total_code_cnt;
     param->pHTCodeCnt[idx_high][idx_low] = pCodeCnt;
 
     uint8_t *pWidth = (uint8_t *)malloc(total_code_cnt);
     param->pHTCodeWidth[idx_high][idx_low] = pWidth;
-    printf("\n\tValidCodeWidth:\t");
+    printf("\tValidCodeWidth:\t");
     for (i=0, j=0; i<16; i++, j=0) {
         while (j++ < pCodeCnt[i]) {
             uint8_t tmp = *pWidth++ = i+1;
@@ -154,7 +160,6 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
         while (j++ < pCodeCnt[i]) {
             if ((i==1) && (j==1)) {
                 *pCode = 0;
-                //printf("a: %d\n", *pCode);
             } else if (j == 1) {        //first add x bits
                 int k = i;
                 int shift_bits = 1;
@@ -163,11 +168,9 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
                 }
                 tmp = (*pCode+1)<<shift_bits;
                 *++pCode = tmp;
-                //printf("b: %d\n", *pCode);
             } else {
                 tmp = *pCode + 1;
                 *++pCode = tmp;
-                //printf("c: %d\n", *pCode);
             }
             //printf("i:%d, j:%d, (%d , %d)=> %#x\n", i, j, pCodeCnt[i], pWidth[i], *pCode);
         }
@@ -197,7 +200,7 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
 //map comp_id to quantized_table
 int parseSOF(ABitReader* abr, struct jpegParam* param)
 {
-    printf("(%s : %d), offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    printf("(%s : %d), SOF offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
     param->bit_width = abr->getBits(8);
     param->height = abr->getBits(16);
@@ -221,20 +224,21 @@ int parseSOF(ABitReader* abr, struct jpegParam* param)
 //map comp_id to huffman_table
 int parseSOS(ABitReader* abr, struct jpegParam* param)
 {
-    printf("(%s : %d), offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    printf("(%s : %d), SOS offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
     int comp_cnt = abr->getBits(8);
     int i;
     for (i=0; i<comp_cnt; i++) {
-        //abr->skipBits(8);
-        CHECK_EQ(abr->getBits(8), i+1);
+        param->ht_comp_id[i] = abr->getBits(8);
+        CHECK_EQ(param->ht_comp_id[i], i+1);
         int ht_idx = abr->getBits(8);
-        param->ht_comp_id[i] = ht_idx;
-        //int dc_idx = ht_idx>>4;
-        //int ac_idx = ht_idx & 0x0f;
+        param->ht_idx[i] = ht_idx;
+        int dc_idx = ht_idx>>4;
+        int ac_idx = ht_idx & 0x0f;
+        printf("\tcolor_id[%d] use DC_table[%d], AC_table[%d]\n", param->ht_comp_id[i], dc_idx, ac_idx);
     }
     uint32_t baseline_flag = abr->getBits(24);
-    puts("\tonly support baseline profile!");
+    puts("\tonly support baseline profile! should pass for most cases!");
     CHECK_EQ(baseline_flag, 0x003f00);
 
     return 0;
@@ -296,6 +300,7 @@ exit:
 //[0][1] Cb0/Cr0, [1][1] Cb/Cr[1-63]
 //RLC(A,B) <-> (*freq, *coef)
 //ret: 1-EOB, 0-none_EOB
+// this primary version is not hight efficient and can not skip 0x00 that follows 0xff
 int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, int idx, int *freq, int *coef)
 {
     uint8_t *pCodeCnt = param->pHTCodeCnt[idx][color];
@@ -303,55 +308,44 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
     uint8_t *pCodeVal = param->pHTCodeVal[idx][color];
 
     //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
-
-    bool skip_flag = false;
-    int left_bits = abr->numBitsLeftInPart()%8;
-    int skip_cnt = 0;
-    if(*abr->data() == 0xff) {
-        printf("find 0xff, need skip 0x00 below! left_bits:%d\n", left_bits);
-        skip_flag = true;
-    }
     int i = 1;
     uint16_t code_high = 0;
     uint16_t code_low = 0;
+    uint16_t code = 0;
+    int cur_width = 0;
     while (i < 16) {
         if (pCodeCnt[i] != 0) {
-            uint16_t code = 0;
-            if (!skip_flag) {
-                code = abr->getBits(i+1);
+            int new_width = (i+1) - cur_width;
+            code_high = code_high << new_width;
+            if (*abr->data() == 0xff) {
+                //printf("oops! offset:%x, left_bits:%d\n", abr->getOffset(), left_bits);
+                int cnt = new_width;
+                do {
+                    code_low = code_low<<1;
+                    code_low += abr->getBits(1);
+                    if (*abr->data() == 0) {
+                        abr->skipBits(8);
+                        printf("encounter 0x00 after 0xff, skip 0x00!\n");
+                    }
+                } while (--cnt);
             } else {
-                if (i+1 < left_bits) {
-                    code = abr->getBits(i+1);
-                } else if (i+1 == left_bits) {
-                    code = code_high = abr->getBits(left_bits);
-                    CHECK_EQ(0x00, abr->getBits(8));
-                } else if (i+1 > left_bits){
-                    code_low = abr->getBits(++skip_cnt);
-                    code = (code_high<<skip_cnt) + code_low;
-                    printf("skip_cnt:%d, code:%#x, high_low(%#x, %#x)\n", skip_cnt, code, code_high, code_low);
-                }
+                code_low = abr->getBits(new_width);
+                //printf("i:%d, code_low:%#x\n", i, code_low);
             }
-            //printf("i:%d, CodeCnt:%d, code:%#x, left_bits:%d\n", i, pCodeCnt[i], code, abr->numBitsLeftInPart());
+            cur_width = i+1;
+            code = code_high + code_low;
+            code_high = code;
+            //printf("cur_width:%d, CodeCnt:%d, code:%#x, left_bits:%d\n", cur_width, pCodeCnt[i], code, abr->numBitsLeftInPart());
             bool find = true;
             int cnt = 0;
             while (*pCode++ != code) {
                 pCodeVal++;
                 if (++cnt == pCodeCnt[i]) {
                     find = false;
-                    if (!skip_flag) {
-                        abr->putBits(code, i+1);
-                    } else {
-                        if (i+1 < left_bits) {
-                            abr->putBits(code, i+1);
-                        } else if (i+1 == left_bits) {
-                        } else if (i+1 > left_bits) {
-                            abr->putBits(code_low, i+1-left_bits);
-                        }
-                    }
-                    //printf("  discard code-bit-width:%d, for we have foreached to the end:%d\n", i+1, cnt);
                     break;
                 }
             }
+
             if (find) {
                 int code_val = abr->getBits(*pCodeVal & 0x0f);
                 //printf("    get the right code(%#x)! bit_width:%d -> %#x -> %#x\n", code, i+1, *pCodeVal, code_val);
@@ -365,18 +359,15 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
                         uint32_t tmp1 = (0xffffffff>>coef_bw)<<coef_bw | code_val;
                         uint32_t tmp2 = ~tmp1;
                         *coef = -tmp2;
-                        //printf("------(%#x, %#x, %d, %#x)--------\n", tmp1, tmp2, *coef, code_val);
                     }
                     return 0;
                 } else if (idx == 1){ //AC
                     *freq = *pCodeVal >> 4;
                     if (*pCodeVal == 0xf0) {
-                    //if (code_val==0xf0) {
                         *freq = 16;
                         *coef = 0;
                         return 0;
                     } else if (*pCodeVal == 0x00) { // EOB: all of below coefficient is 0
-                    //} else if (code_val==0x00) { // EOB: all of below coefficient is 0
                         *freq = 0; //none sense
                         *coef = 0;
                         return EOB;  //careful for this ret, it means EOB!
@@ -385,13 +376,9 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
                         if (code_val >> (coef_bw-1)) {    //  MSB(Most Significant Bit) = 1
                             *coef = code_val;
                         } else {                // MSB = 0
-                            //uint32_t tmp1 = 0xffffffff & code_val;
-                            //uint32_t tmp2 = ~tmp1;
-                            //*coef = tmp2;
                             uint32_t tmp1 = (0xffffffff>>coef_bw)<<coef_bw | code_val;
                             uint32_t tmp2 = ~tmp1;
                             *coef = -tmp2;
-                            //printf("------(%#x, %#x, %d, %#x)--------\n", tmp1, tmp2, *coef, code_val);
                         }
                         return 0;
                     }
@@ -410,6 +397,178 @@ int HuffmanDecode(struct ABitReader *abr, struct jpegParam *param, int color, in
     return 0;
 }
 
+//implement huffman decode again!
+//(freq, coef): freq 0 before coef for RLC
+int HuffmanDecode2(struct ABitReader *abr, struct jpegParam *param, int color, int idx, int *freq, int *coef)
+{
+    uint8_t *pCodeCnt = param->pHTCodeCnt[idx][color];
+    uint16_t *pCode = param->pHTCode[idx][color];
+    uint8_t *pCodeVal = param->pHTCodeVal[idx][color];
+
+    //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
+
+    /** 0x00 follow 0xff by code standard, we need skip 0x00
+     *  we may encounter 0xff not in the start of one scan, so need process this case
+     */
+    bool pre_skip_flag = false;
+    int distance = -1;
+    // how many bits from current position when come to 0x00 that follows 0xff?
+    // we detect 4 Bytes for one scan, because it can cover most case except extreme case
+    if ((abr->data()[0]==0xff) || (abr->data()[1]==0xff) || (abr->data()[2]==0xff) || (abr->data()[3]==0xff)) {
+        pre_skip_flag = true;
+        int left_bits = abr->numBitsLeftInPart()%8; //how many bits left in current Byte
+        int i = 0;
+        for (; abr->data()[i]!=0xff; i++);
+        //CHECK_EQ(abr->data()[i+1], 0x00); //may encounter EOI(FF D9)
+        distance = i*8 + (left_bits==0?8:left_bits);
+        //printf("\tfind 0xff(%#x,%#x,%#x,%#x) left_bits:%d, offset:%#x, distance:%d\n", abr->data()[0],
+        //        abr->data()[1], abr->data()[2], abr->data()[3], left_bits, abr->getOffset(), distance);
+        //assert(0);
+    }
+
+    uint16_t *pCodeStartPos = pCode;
+    uint16_t code = 0;
+    int cur_code_width = 2; //[2,16], may be 0 in pCodeCnt[cur_code_width-1]
+    int last_code_width = 1;
+    code = abr->getBits(1);
+    while (cur_code_width <= 16)
+    {
+          //this part no skip 0x00 process
+//        if (pCodeCnt[cur_code_width-1] == 0)
+//        {
+//            cur_code_width++;
+//            continue;
+//        }
+//        else
+//        {
+//            int shift_width = cur_code_width-last_code_width;
+//            code = (code<<shift_width) + abr->getBits(shift_width);
+//            //printf("searching... width[%d/%d], code[%#x]\n", cur_code_width, last_code_width, code);
+//            bool find = true;
+//            int cnt = 0;
+//            while (*pCode++ != code) {
+//                if (++cnt == pCodeCnt[cur_code_width-1]) {
+//                    find = false;
+//                    break;
+//                }
+//            }
+
+        if (pCodeCnt[cur_code_width-1] == 0)
+        {
+            if (cur_code_width == distance+1) {
+                //printf("[warning] when pCodeCnt[]=0, left_bits_in_Byte[%d], data[%#x] probably be 0x00, skip it!\n", abr->numBitsLeftInPart()%8, abr->data()[0]);
+                //printf("[info] pos[%#x], cur_code[%#x], cur_code_widht[%d], distance[%d]!\n", abr->getOffset(), code, cur_code_width, distance);
+                int add_bw = abr->numBitsLeftInPart()%8;
+                if (add_bw) {
+                    code = (code<<add_bw) + abr->getBits(add_bw);
+                    CHECK(abr->data()[0]==0);
+                    last_code_width += add_bw;
+                    //printf("add_bw[%d], cur_code[%#x], code_width[%d/%d]\n", add_bw, code, cur_code_width, last_code_width);
+                    //assert(0);
+                }
+                abr->skipBits(8);
+            }
+            cur_code_width++;
+            continue;
+        }
+        else
+        {
+            if (cur_code_width == distance+1) {
+                //printf("[warning] when pCodeCnt[]!=0, left_bits_in_Byte[%d], data[%#x] probably be 0x00, skip it!\n", abr->numBitsLeftInPart()%8, abr->data()[0]);
+                //printf("[info] pos[%#x], cur_code[%#x], cur_code_widht[%d], distance[%d]!\n", abr->getOffset(), code, cur_code_width, distance);
+                int add_bw = abr->numBitsLeftInPart()%8;
+                if (add_bw) {
+                    code = (code<<add_bw) + abr->getBits(add_bw);
+                    CHECK(abr->data()[0]==0);
+                    last_code_width += add_bw;
+                    //printf("add_bw[%d], cur_code[%#x], code_width[%d/%d]\n", add_bw, code, cur_code_width, last_code_width);
+                    //assert(0);
+                }
+                abr->skipBits(8);
+                //assert(0);
+            }
+            int shift_width = cur_code_width-last_code_width;
+            code = (code<<shift_width) + abr->getBits(shift_width);
+            //printf("searching... code_width[%d/%d], code[%#x], pos[%#x], bit_left[%d]\n", cur_code_width, last_code_width, code, abr->getOffset(), abr->numBitsLeftInPart());
+            bool find = true;
+            int cnt = 0;
+            while (*pCode++ != code) {
+                if (++cnt == pCodeCnt[cur_code_width-1]) {
+                    find = false;
+                    break;
+                }
+            }
+
+            if (find == false)
+            {
+                last_code_width = cur_code_width;
+                cur_code_width++;
+            }
+            else
+            {
+                int offset = pCode - pCodeStartPos - 1;
+                uint8_t code_val = pCodeVal[offset];
+                int coef_bitwidth = code_val & 0x0f;
+                uint16_t raw_code_val = abr->getBits(coef_bitwidth);
+                //printf("color/idx[%d:%d], find code[%#x], coef_bitwidth[%d], code_val[%#x], raw_code_val[%#x]\n", color, idx, code, coef_bitwidth, code_val, raw_code_val);
+                if (idx == 0)  //DC
+                {
+                    *freq = 0;
+                    if (raw_code_val >> (coef_bitwidth-1))
+                    {
+                        *coef = raw_code_val;       //  MSB(Most Significant Bit) = 1, positive value
+                    }
+                    else
+                    {
+                        int tmp = ((1<<coef_bitwidth)-1) & (~raw_code_val);
+                        *coef = -tmp;
+                    }
+                    return 0;
+                }
+                else if (idx == 1) //AC
+                {
+                    if (code_val == 0xf0)
+                    {
+                        *freq = 16;
+                        *coef = 0;
+                        return 0;
+                    }
+                    else if (code_val == 0x00) // EOB: all of below coefficient is 0
+                    {
+                        *freq = 0;      //none sense
+                        *coef = 0;
+                        return EOB;     //careful for this ret, it means EOB!
+                    }
+                    else
+                    {
+                        *freq = code_val>>4;
+                        if (raw_code_val >> (coef_bitwidth-1))
+                        {
+                            *coef = raw_code_val;       //  MSB(Most Significant Bit) = 1, positive value
+                        }
+                        else
+                        {
+                            int tmp = ((1<<coef_bitwidth)-1) & (~raw_code_val); //reverse every bit when MSB=0
+                            *coef = -tmp;
+                        }
+                        return 0;
+                    }
+                }
+                else
+                {
+                    TRESPASS();
+                    break;
+                }
+            }
+        }
+    }
+
+    printf("fatal error! huffman decode failed!\n");
+    TRESPASS();
+
+    return 0;
+}
+
 // IDPCM + IRLC
 //color: 0-Y; 1-CbCr
 int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, int *block, bool dump)
@@ -420,7 +579,7 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
     int cnt, coef;
 
     //DC
-    int ret = HuffmanDecode(abr, param, color, 0, &cnt, &coef);
+    int ret = HuffmanDecode2(abr, param, color, 0, &cnt, &coef);
     int extra;
     switch (param->cur_type) {
         case 0:
@@ -448,7 +607,7 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
     //AC
     int i;
     for (i=1; i<64; i++) {
-        ret = HuffmanDecode(abr, param, color, 1, &cnt, &coef);
+        ret = HuffmanDecode2(abr, param, color, 1, &cnt, &coef);
         //printf("(%d, %d)\n", cnt, coef);
         while(cnt--) {
             *ptr++ = 0;
@@ -466,7 +625,7 @@ int RebuildMCU1X1(struct ABitReader *abr, struct jpegParam *param, int color, in
 
     //dump block
     if (dump) {
-        puts("----after huffman decode----");
+        printf("----after huffman decode, color[%d]----\n", color);
         for (i=0; i<8; i++) {
             for (int j=0; j<8; j++) {
                 printf("%4d  ", *block++);
@@ -631,16 +790,19 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     fs->readAt(offset, buf, file_sz);
     struct ABitReader abr(buf, file_sz);
 
+    printf("entropy data begin! offset:%#x\n", offset);
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
-    for (i=0; i<10; i++) {
+    bool dpcm_flag = false;
+    bool dump = true;
+    for (i=0; i<128; i++) {
         for (j=0; j<128; j++) {
             printf("------------------block(%d,%d)----------------------\n", i, j);
             param->cur_type = 0;
-            param->YDC_dpcm = j;
+            param->YDC_dpcm = dpcm_flag;
             //puts("--------Y--------");
-            RebuildMCU1X1(&abr, param, 0, &block1[0][0], 1);               //IDPCM + IRLC
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
             //JpegDequantization(&abr, param, &block1[0][0], 0);             //IQS
             //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);    //IZigZag
             //IDCT2(&dst[0], &block2[0], 0);                                 //IDCT
@@ -648,22 +810,24 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
             //JpegCopyYUV(&yuv[0], &dst[0], 0);
 
             param->cur_type = 1;
-            param->CbDC_dpcm = j;
+            param->CbDC_dpcm = dpcm_flag;
             //puts("--------Cb--------");
-            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 1);
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
             //JpegDequantization(&abr, param, &block1[0][0], 0);
             //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
             //IDCT2(&dst[0], &block2[0], 0);
             //JpegReLevelOffset(&dst[0], 0);
 
             param->cur_type = 2;
-            param->CrDC_dpcm = j;
+            param->CrDC_dpcm = dpcm_flag;
             //puts("--------Cr--------");
-            RebuildMCU1X1(&abr, param, 1, &block1[0][0], 1);
+            RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
             //JpegDequantization(&abr, param, &block1[0][0], 0);
             //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
             //IDCT2(&dst[0], &block2[0], 0);
             //JpegReLevelOffset(&dst[0], 0;
+
+            dpcm_flag = true;
         }
     }
 
@@ -682,6 +846,10 @@ int main(void)
     off64_t sz;
     pFS->getSize(&sz);
     cout<<"sz: "<<sz<<endl;
+
+    uint8_t *buf = (uint8_t*)malloc(4096);
+    pFS->readAt(0, buf, 4096);
+    struct ABitReader abr(buf, 4096);
 
     int offset = ParseJpegHeader(pFS, &param);
     if (offset<0) {
