@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <string.h>
 
 #include "AString.h"
@@ -762,7 +763,7 @@ int JpegReLevelOffset(float (*block)[8], bool dump)
     return 0;
 }
 
-int JpegCopyYUV(uint8_t (*dst)[8], float (*src)[8], bool dump)
+inline int JpegCopyYUV(uint8_t (*dst)[8], float (*src)[8], bool dump)
 {
     int i,j;
     for (i=0; i<8; i++) {
@@ -790,46 +791,81 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     fs->readAt(offset, buf, file_sz);
     struct ABitReader abr(buf, file_sz);
 
-    printf("entropy data begin! offset:%#x\n", offset);
+    struct timeval begin_tv, end_tv;
+    gettimeofday(&begin_tv, NULL);
+
+    uint8_t *y_data = (uint8_t*)malloc(1024*1024);
+    uint8_t *u_data = (uint8_t*)malloc(1024*1024);
+    uint8_t *v_data = (uint8_t*)malloc(1024*1024);
+
+    printf("entropy begin! offset[%#x]\n", offset);
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
     bool dpcm_flag = false;
-    bool dump = true;
+    bool dump = false;
     for (i=0; i<128; i++) {
         for (j=0; j<128; j++) {
-            printf("------------------block(%d,%d)----------------------\n", i, j);
+            //printf("------------------block(%d,%d)----------------------\n", i, j);
             param->cur_type = 0;
             param->YDC_dpcm = dpcm_flag;
             //puts("--------Y--------");
             RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
-            //JpegDequantization(&abr, param, &block1[0][0], 0);             //IQS
-            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);    //IZigZag
-            //IDCT2(&dst[0], &block2[0], 0);                                 //IDCT
-            //JpegReLevelOffset(&dst[0], 0);                                 //ILevelOffset
-            //JpegCopyYUV(&yuv[0], &dst[0], 0);
+            JpegDequantization(&abr, param, &block1[0][0], dump);             //IQS
+            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);    //IZigZag
+            IDCT2(&dst[0], &block2[0], dump);                                 //IDCT
+            JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
+            JpegCopyYUV(&yuv[0], &dst[0], dump);
+            for (int k=0; k<8; k++)
+                memcpy(y_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
             param->cur_type = 1;
             param->CbDC_dpcm = dpcm_flag;
             //puts("--------Cb--------");
             RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
-            //JpegDequantization(&abr, param, &block1[0][0], 0);
-            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
-            //IDCT2(&dst[0], &block2[0], 0);
-            //JpegReLevelOffset(&dst[0], 0);
+            JpegDequantization(&abr, param, &block1[0][0], dump);
+            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
+            IDCT2(&dst[0], &block2[0], dump);
+            JpegReLevelOffset(&dst[0], dump);
+            for (int k=0; k<8; k++)
+                memcpy(u_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
             param->cur_type = 2;
             param->CrDC_dpcm = dpcm_flag;
             //puts("--------Cr--------");
             RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
-            //JpegDequantization(&abr, param, &block1[0][0], 0);
-            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], 0);
-            //IDCT2(&dst[0], &block2[0], 0);
-            //JpegReLevelOffset(&dst[0], 0;
+            JpegDequantization(&abr, param, &block1[0][0], dump);
+            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
+            IDCT2(&dst[0], &block2[0], dump);
+            JpegReLevelOffset(&dst[0], dump);
+            for (int k=0; k<8; k++)
+                memcpy(v_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
             dpcm_flag = true;
         }
     }
+    printf("entropy end! offset[%#x], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
+            abr.getOffset(), abr.data()[0], abr.data()[1], abr.data()[2]);
+
+    gettimeofday(&end_tv, NULL);
+    long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
+    printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
+
+    FILE *yuv_fp = fopen("pic.yuv", "wb");
+    // yuv444
+    fwrite(y_data, 1, 1024*1024, yuv_fp);
+    fwrite(v_data, 1, 1024*1024, yuv_fp);
+    fwrite(u_data, 1, 1024*1024, yuv_fp);
+    // nv21
+    //for (int i=0; i<1024; i+=2)
+    //{
+    //    for (int j=0; j<1024; j+=2)
+    //    {
+    //        fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
+    //        fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
+    //    }
+    //}
+    fclose(yuv_fp);
 
     free(buf);
 
