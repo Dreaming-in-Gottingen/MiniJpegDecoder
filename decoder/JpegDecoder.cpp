@@ -827,6 +827,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
             JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
             IDCT2(&dst[0], &block2[0], dump);
             JpegReLevelOffset(&dst[0], dump);
+            JpegCopyYUV(&yuv[0], &dst[0], dump);
             for (int k=0; k<8; k++)
                 memcpy(u_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
@@ -838,6 +839,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
             JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
             IDCT2(&dst[0], &block2[0], dump);
             JpegReLevelOffset(&dst[0], dump);
+            JpegCopyYUV(&yuv[0], &dst[0], dump);
             for (int k=0; k<8; k++)
                 memcpy(v_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
@@ -852,19 +854,23 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
     FILE *yuv_fp = fopen("pic.yuv", "wb");
+
     // yuv444
-    fwrite(y_data, 1, 1024*1024, yuv_fp);
-    fwrite(v_data, 1, 1024*1024, yuv_fp);
-    fwrite(u_data, 1, 1024*1024, yuv_fp);
+    //fwrite(y_data, 1, 1024*1024, yuv_fp);
+    //fwrite(v_data, 1, 1024*1024, yuv_fp);
+    //fwrite(u_data, 1, 1024*1024, yuv_fp);
+
     // nv21
-    //for (int i=0; i<1024; i+=2)
-    //{
-    //    for (int j=0; j<1024; j+=2)
-    //    {
-    //        fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
-    //        fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
-    //    }
-    //}
+    fwrite(y_data, 1, 1024*1024, yuv_fp);
+    for (int i=0; i<1024; i+=2)
+    {
+        for (int j=0; j<1024; j+=2)
+        {
+            fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
+            fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
+        }
+    }
+
     fclose(yuv_fp);
 
     free(buf);
