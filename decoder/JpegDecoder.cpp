@@ -488,6 +488,13 @@ int HuffmanDecode2(struct ABitReader *abr, struct jpegParam *param, int color, i
                 abr->skipBits(8);
                 //assert(0);
             }
+            int num = abr->numBitsLeftInPart()%8;
+            if (num==0 && abr->data()[0]==0x00 && abr->data()[-1]==0xff) {
+                //skip the second pair of 0xff 0x00 when meed continuous two pair
+                //printf("Be careful! offset:%#x, [%#x,%#x], [%#x,%#x]\n", abr->getOffset(), abr->data()[-3], abr->data()[-2], abr->data()[-1], abr->data()[0]);
+                //assert(0);
+                abr->skipBits(8);
+            }
             int shift_width = cur_code_width-last_code_width;
             code = (code<<shift_width) + abr->getBits(shift_width);
             //printf("searching... code_width[%d/%d], code[%#x], pos[%#x], bit_left[%d]\n", cur_code_width, last_code_width, code, abr->getOffset(), abr->numBitsLeftInPart());
@@ -802,48 +809,55 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
-    bool dpcm_flag = false;
+
     bool dump = false;
-    for (i=0; i<128; i++) {
-        for (j=0; j<128; j++) {
+    param->YDC_dpcm = false;
+    param->CbDC_dpcm = false;
+    param->CrDC_dpcm = false;
+    for (i=0; i<64; i++) {
+        for (j=0; j<64; j++) {
             //printf("------------------block(%d,%d)----------------------\n", i, j);
             param->cur_type = 0;
-            param->YDC_dpcm = dpcm_flag;
             //puts("--------Y--------");
             RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
-            JpegDequantization(&abr, param, &block1[0][0], dump);             //IQS
-            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);    //IZigZag
-            IDCT2(&dst[0], &block2[0], dump);                                 //IDCT
-            JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
-            JpegCopyYUV(&yuv[0], &dst[0], dump);
-            for (int k=0; k<8; k++)
-                memcpy(y_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+            param->YDC_dpcm = true;
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
+            RebuildMCU1X1(&abr, param, 0, &block1[0][0], dump);               //IDPCM + IRLC
+            //JpegDequantization(&abr, param, &block1[0][0], dump);             //IQS
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);    //IZigZag
+            //IDCT2(&dst[0], &block2[0], dump);                                 //IDCT
+            //JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
+            //JpegCopyYUV(&yuv[0], &dst[0], dump);
+            //for (int k=0; k<8; k++)
+            //    memcpy(y_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
             param->cur_type = 1;
-            param->CbDC_dpcm = dpcm_flag;
             //puts("--------Cb--------");
             RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
-            JpegDequantization(&abr, param, &block1[0][0], dump);
-            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
-            IDCT2(&dst[0], &block2[0], dump);
-            JpegReLevelOffset(&dst[0], dump);
-            JpegCopyYUV(&yuv[0], &dst[0], dump);
-            for (int k=0; k<8; k++)
-                memcpy(u_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+            param->CbDC_dpcm = true;
+            //JpegDequantization(&abr, param, &block1[0][0], dump);
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
+            //IDCT2(&dst[0], &block2[0], dump);
+            //JpegReLevelOffset(&dst[0], dump);
+            //JpegCopyYUV(&yuv[0], &dst[0], dump);
+            //for (int k=0; k<8; k++)
+            //    memcpy(u_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
             param->cur_type = 2;
-            param->CrDC_dpcm = dpcm_flag;
             //puts("--------Cr--------");
             RebuildMCU1X1(&abr, param, 1, &block1[0][0], dump);
-            JpegDequantization(&abr, param, &block1[0][0], dump);
-            JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
-            IDCT2(&dst[0], &block2[0], dump);
-            JpegReLevelOffset(&dst[0], dump);
-            JpegCopyYUV(&yuv[0], &dst[0], dump);
-            for (int k=0; k<8; k++)
-                memcpy(v_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+            param->CrDC_dpcm = true;
+            //JpegDequantization(&abr, param, &block1[0][0], dump);
+            //JpegReZigZag(&abr, param, &block2[0][0], &block1[0][0], dump);
+            //IDCT2(&dst[0], &block2[0], dump);
+            //JpegReLevelOffset(&dst[0], dump);
+            //JpegCopyYUV(&yuv[0], &dst[0], dump);
+            //for (int k=0; k<8; k++)
+            //    memcpy(v_data+i*8*1024+j*8+k*1024, yuv[k], 8);
 
-            dpcm_flag = true;
+            //dpcm_flag = true;
+            //assert(!(i==27&&j==16));
         }
     }
     printf("entropy end! offset[%#x], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
@@ -853,7 +867,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    FILE *yuv_fp = fopen("pic.yuv", "wb");
+    //FILE *yuv_fp = fopen("test_pic.yuv", "wb");
 
     // yuv444
     //fwrite(y_data, 1, 1024*1024, yuv_fp);
@@ -861,17 +875,17 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     //fwrite(u_data, 1, 1024*1024, yuv_fp);
 
     // nv21
-    fwrite(y_data, 1, 1024*1024, yuv_fp);
-    for (int i=0; i<1024; i+=2)
-    {
-        for (int j=0; j<1024; j+=2)
-        {
-            fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
-            fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
-        }
-    }
+    //fwrite(y_data, 1, 1024*1024, yuv_fp);
+    //for (int i=0; i<1024; i+=2)
+    //{
+    //    for (int j=0; j<1024; j+=2)
+    //    {
+    //        fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
+    //        fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
+    //    }
+    //}
 
-    fclose(yuv_fp);
+    //fclose(yuv_fp);
 
     free(buf);
 
@@ -881,7 +895,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 int main(void)
 {
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("testrgb-1x1.jpg");
+    FileSource *pFS = new FileSource("testrgb-2x2.jpg");
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
