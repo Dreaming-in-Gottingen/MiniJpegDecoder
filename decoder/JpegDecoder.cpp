@@ -61,6 +61,8 @@ struct jpegParam {
     uint8_t vfactor[3];     //Vertical sampling factor
     uint8_t qt_id[3];       //Quantization table destination selector
 
+    uint32_t row_stride;    //block_cnt*8, maybe larger than width
+
     //SOS
     uint8_t ht_comp_id[3];  //1-Y, 2-Cb, 3-Cr
     uint8_t ht_idx[3];      //0xAB -> A: DC huffman table idx; B: AC huffman table idx.
@@ -104,20 +106,27 @@ int parseDQT(ABitReader* abr, struct jpegParam* param)
 {
     printf("(%s : %d), DQT offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
-    int idx = abr->getBits(8) & 0x0f;
-    param->pQT[idx] = (uint8_t*)malloc(64);
-    memcpy(param->pQT[idx], abr->data(), 64);
-    abr->skipBits(64*8);
-    int i,j;
-    uint8_t *ptr = param->pQT[idx];
-    printf("\tQuantization table for color_id(%d):\t", idx);
-    for (i=0; i<8; i++) {
-        printf("\n\t");
-        for (j=0; j<8; j++) {
-            printf("%2d  ", *ptr++);
+    len -= 2;
+    while (len>0)
+    {
+        int idx = abr->getBits(8) & 0x0f;
+        param->pQT[idx] = (uint8_t*)malloc(64);
+        memcpy(param->pQT[idx], abr->data(), 64);
+        abr->skipBits(64*8);
+
+        int i,j;
+        uint8_t *ptr = param->pQT[idx];
+        printf("\tQuantization table for color_id(%d):\t", idx);
+        for (i=0; i<8; i++) {
+            printf("\n\t");
+            for (j=0; j<8; j++) {
+                printf("%2d  ", *ptr++);
+            }
         }
+
+        puts("\n\t---------------------------------------------------------------------------------------------");
+        len -= 65;
     }
-    puts("\n\t---------------------------------------------------------------------------------------------");
 
     return 0;
 }
@@ -127,87 +136,91 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
 {
     printf("(%s : %d), DHT offset:%#x\n", __func__, __LINE__, abr->getOffset());
     int len = abr->getBits(16);
-    uint8_t idx = abr->getBits(8);
-    uint8_t idx_high = idx>>4;
-    uint8_t idx_low = idx & 0x0f;
+    len -= 2;
+    while (len>0)
+    {
+        uint8_t idx = abr->getBits(8);
+        uint8_t idx_high = idx>>4;
+        uint8_t idx_low = idx & 0x0f;
 
-    //idx_hight represent DC or AC: 0-DC, 1-AC
-    //idx_low represent color id: 0-Y, 1-uv
-    //[0][x] -- DC table, [0][0]:DC0, [0][1]:DC1
-    //[1][x] -- AC table, [1][0]:AC0, [1][1]:AC1
-    //generate pHTCodeCnt[idx_high][idx_low]
-    uint8_t *pCodeCnt = (uint8_t*)malloc(16);
-    int i, j;
-    int total_code_cnt = 0;
-    printf("\ttable id: [%d][%d]--[%s%d], dump more detail info...\n", idx_high, idx_low, idx_high==0?"DC":"AC", idx_low);
-    printf("\tCodeCntOfNBits:\t");
-    for (i=0; i<16; i++) {
-        int code_cnt = abr->getBits(8);
-        pCodeCnt[i] = code_cnt;
-        total_code_cnt += code_cnt;
-        printf("%2d  ", code_cnt);
-    }
-    printf("\n\ttotal code cnt: %d\n", total_code_cnt);
-    param->HTCodeRealCnt[idx_high][idx_low] = total_code_cnt;
-    param->pHTCodeCnt[idx_high][idx_low] = pCodeCnt;
-
-    uint8_t *pWidth = (uint8_t *)malloc(total_code_cnt);
-    param->pHTCodeWidth[idx_high][idx_low] = pWidth;
-    printf("\tValidCodeWidth:\t");
-    for (i=0, j=0; i<16; i++, j=0) {
-        while (j++ < pCodeCnt[i]) {
-            uint8_t tmp = *pWidth++ = i+1;
-            printf("%2d  ", tmp);
+        //idx_hight represent DC or AC: 0-DC, 1-AC
+        //idx_low represent color id: 0-Y, 1-uv
+        //[0][x] -- DC table, [0][0]:DC0, [0][1]:DC1
+        //[1][x] -- AC table, [1][0]:AC0, [1][1]:AC1
+        //generate pHTCodeCnt[idx_high][idx_low]
+        uint8_t *pCodeCnt = (uint8_t*)malloc(16);
+        int i, j;
+        int total_code_cnt = 0;
+        printf("\ttable id: [%d][%d]--[%s%d], dump more detail info...\n", idx_high, idx_low, idx_high==0?"DC":"AC", idx_low);
+        printf("\tCodeCntOfNBits:\t");
+        for (i=0; i<16; i++) {
+            int code_cnt = abr->getBits(8);
+            pCodeCnt[i] = code_cnt;
+            total_code_cnt += code_cnt;
+            printf("%2d  ", code_cnt);
         }
-    }
-    puts("");
+        printf("\n\ttotal code cnt: %d\n", total_code_cnt);
+        param->HTCodeRealCnt[idx_high][idx_low] = total_code_cnt;
+        param->pHTCodeCnt[idx_high][idx_low] = pCodeCnt;
 
-    pWidth = param->pHTCodeWidth[idx_high][idx_low];
-
-    //generate pHTCode[idx_high][idx_low]
-    uint16_t *pCode = (uint16_t*)malloc(2*total_code_cnt);   //huffman code width: 2~16 bits
-    param->pHTCode[idx_high][idx_low] = pCode;
-    uint16_t last_code = 0;
-    for (i=0; i<16; i++) {
-        int j = 0;
-        uint16_t tmp;
-        while (j++ < pCodeCnt[i]) {
-            if ((i==1) && (j==1)) {
-                *pCode = 0;
-            } else if (j == 1) {        //first add x bits
-                int k = i;
-                int shift_bits = 1;
-                while(pCodeCnt[--k] == 0) {
-                    shift_bits++;
-                }
-                tmp = (*pCode+1)<<shift_bits;
-                *++pCode = tmp;
-            } else {
-                tmp = *pCode + 1;
-                *++pCode = tmp;
+        uint8_t *pWidth = (uint8_t *)malloc(total_code_cnt);
+        param->pHTCodeWidth[idx_high][idx_low] = pWidth;
+        printf("\tValidCodeWidth:\t");
+        for (i=0, j=0; i<16; i++, j=0) {
+            while (j++ < pCodeCnt[i]) {
+                uint8_t tmp = *pWidth++ = i+1;
+                printf("%2d  ", tmp);
             }
-            //printf("i:%d, j:%d, (%d , %d)=> %#x\n", i, j, pCodeCnt[i], pWidth[i], *pCode);
         }
+        puts("");
+
+        pWidth = param->pHTCodeWidth[idx_high][idx_low];
+
+        //generate pHTCode[idx_high][idx_low]
+        uint16_t *pCode = (uint16_t*)malloc(2*total_code_cnt);   //huffman code width: 2~16 bits
+        param->pHTCode[idx_high][idx_low] = pCode;
+        uint16_t last_code = 0;
+        for (i=0; i<16; i++) {
+            int j = 0;
+            uint16_t tmp;
+            while (j++ < pCodeCnt[i]) {
+                if ((i==1) && (j==1)) {
+                    *pCode = 0;
+                } else if (j == 1) {        //first add x bits
+                    int k = i;
+                    int shift_bits = 1;
+                    while(pCodeCnt[--k] == 0) {
+                        shift_bits++;
+                    }
+                    tmp = (*pCode+1)<<shift_bits;
+                    *++pCode = tmp;
+                } else {
+                    tmp = *pCode + 1;
+                    *++pCode = tmp;
+                }
+                //printf("i:%d, j:%d, (%d , %d)=> %#x\n", i, j, pCodeCnt[i], pWidth[i], *pCode);
+            }
+        }
+
+        //generate pHTCodeVal[idx_high][idx_low]
+        uint8_t *pCodeVal = (uint8_t*)malloc(total_code_cnt);   //huffman code width: 2~16 bits
+        param->pHTCodeVal[idx_high][idx_low] = pCodeVal;
+        for (i=0; i<total_code_cnt; i++) {
+            *pCodeVal++ = abr->getBits(8);
+        }
+
+        printf("\t-----------------huffman table: [%d][%d]---------------------\n", idx_high, idx_low);
+
+        pWidth = param->pHTCodeWidth[idx_high][idx_low];
+        pCode = param->pHTCode[idx_high][idx_low];
+        pCodeVal = param->pHTCodeVal[idx_high][idx_low];
+        puts("\t[SequenceNum] (CodeWidth,   Code) -> CodeVal");
+        for (i=0; i<total_code_cnt; i++) {
+            printf("\t[%11d] (%9d, %#6x) -> %#7x\n", i, *pWidth++, *pCode++, *pCodeVal++);
+        }
+        len -= (17+total_code_cnt);
+        puts("\t---------------------------------------------------------------------------------------------");
     }
-
-    //generate pHTCodeVal[idx_high][idx_low]
-    uint8_t *pCodeVal = (uint8_t*)malloc(total_code_cnt);   //huffman code width: 2~16 bits
-    param->pHTCodeVal[idx_high][idx_low] = pCodeVal;
-    for (i=0; i<total_code_cnt; i++) {
-        *pCodeVal++ = abr->getBits(8);
-    }
-
-    printf("\t-----------------huffman table: [%d][%d]---------------------\n", idx_high, idx_low);
-
-    pWidth = param->pHTCodeWidth[idx_high][idx_low];
-    pCode = param->pHTCode[idx_high][idx_low];
-    pCodeVal = param->pHTCodeVal[idx_high][idx_low];
-    puts("\t[SequenceNum] (CodeWidth,   Code) -> CodeVal");
-    for (i=0; i<total_code_cnt; i++) {
-        printf("\t[%11d] (%9d, %#6x) -> %#7x\n", i, *pWidth++, *pCode++, *pCodeVal++);
-    }
-    puts("\t---------------------------------------------------------------------------------------------");
-
     return 0;
 }
 
@@ -314,7 +327,9 @@ int ParseJpegHeader(FileSource *fs, struct jpegParam *param)
             case EOI:
                 break;
             default:
-                CHECK(0);
+                printf("unknown tag[%#x] at position[%#x]\n", jpeg_tag, abr.getOffset());
+                abr.skipBits((abr.getBits(16)-2)*8);
+                //CHECK(0);
                 break;
         }
     }
@@ -715,7 +730,8 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
         }
     }
 
-    printf("fatal error! huffman decode failed!\n");
+    printf("\tfatal error! huffman decode failed!\n");
+    printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
     TRESPASS();
 
     return 0;
@@ -1133,9 +1149,9 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     struct timeval begin_tv, end_tv;
     gettimeofday(&begin_tv, NULL);
 
-    param->py_data = (uint8_t*)malloc(1024*1024);
-    param->pu_data = (uint8_t*)malloc(1024*1024);
-    param->pv_data = (uint8_t*)malloc(1024*1024);
+    param->py_data = (uint8_t*)malloc(param->width*param->height);
+    param->pu_data = (uint8_t*)malloc(param->width*param->height);
+    param->pv_data = (uint8_t*)malloc(param->width*param->height);
 
     printf("entropy begin! offset[%#x]\n", offset);
     int i,j;
@@ -1143,8 +1159,8 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     int *pos2 = &block2[0][0];
 
     bool dump = false;
-    int mcu_row = 1024/8/param->vfactor[0];
-    int mcu_col = 1024/8/param->hfactor[0];
+    int mcu_row = param->height/8/param->vfactor[0];
+    int mcu_col = param->width/8/param->hfactor[0];
     for (i=0; i<mcu_row; i++) {
         for (j=0; j<mcu_col; j++) {
             //printf("------------------block(%d,%d)----------------------\n", i, j);
@@ -1177,9 +1193,9 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     //}
 
     // yuv420_3_plane for 2x2.jpg
-    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    //fwrite(param->pu_data, 1, 1024*1024/4, yuv_fp);
-    //fwrite(param->pv_data, 1, 1024*1024/4, yuv_fp);
+    fwrite(param->py_data, 1, 1024*1024, yuv_fp);
+    fwrite(param->pu_data, 1, 1024*1024/4, yuv_fp);
+    fwrite(param->pv_data, 1, 1024*1024/4, yuv_fp);
 
     // nv21 for 1x2.jpg
     //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
@@ -1193,13 +1209,13 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     //}
 
     // yuv420_3_plane for 2x1.jpg
-    fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    for (int i=0; i<1024; i+=2)
-        for (int j=0; j<64; j++)
-            fwrite(param->pu_data+i*512+j*8, 1, 8, yuv_fp);
-    for (int i=0; i<1024; i+=2)
-        for (int j=0; j<64; j++)
-            fwrite(param->pv_data+i*512+j*8, 1, 8, yuv_fp);
+    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
+    //for (int i=0; i<1024; i+=2)
+    //    for (int j=0; j<64; j++)
+    //        fwrite(param->pu_data+i*512+j*8, 1, 8, yuv_fp);
+    //for (int i=0; i<1024; i+=2)
+    //    for (int j=0; j<64; j++)
+    //        fwrite(param->pv_data+i*512+j*8, 1, 8, yuv_fp);
 
     fclose(yuv_fp);
 
@@ -1211,7 +1227,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 int main(void)
 {
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("testrgb-2x1.jpg");
+    FileSource *pFS = new FileSource("testrgb-2x2.jpg");
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
