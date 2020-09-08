@@ -25,6 +25,8 @@ using namespace codec_utils;
 #define DHT 0xFFC4      //Define Huffman table(s)
 #define SOS 0xFFDA      //Start of scan
 
+#define DRI 0xFFDD      //Define Restart Interval
+
 enum {
     EOB = 1,
 };
@@ -62,6 +64,10 @@ struct jpegParam {
     uint8_t qt_id[3];       //Quantization table destination selector
 
     uint32_t row_stride;    //block_cnt*8, maybe larger than width
+
+    //DRI
+    uint32_t restart_interval;  //count for MCU restart scan, will meet RSTn(FF D0-D7) when restart MCU scan
+    uint32_t scan_mcu_cnt;      //increase until restart_interval
 
     //SOS
     uint8_t ht_comp_id[3];  //1-Y, 2-Cb, 3-Cr
@@ -265,6 +271,16 @@ int parseSOF(ABitReader* abr, struct jpegParam* param)
     return 0;
 }
 
+
+int parseDRI(ABitReader* abr, struct jpegParam* param)
+{
+    printf("(%s : %d), DRI offset:%#x\n", __func__, __LINE__, abr->getOffset());
+    int len = abr->getBits(16);
+    param->restart_interval = abr->getBits(16);
+
+    return 0;
+}
+
 //map comp_id to huffman_table
 int parseSOS(ABitReader* abr, struct jpegParam* param)
 {
@@ -319,6 +335,9 @@ int ParseJpegHeader(FileSource *fs, struct jpegParam *param)
                 break;
             case DHT:
                 parseDHT(&abr, param);
+                break;
+            case DRI:
+                parseDRI(&abr, param);
                 break;
             case SOS:
                 parseSOS(&abr, param);
@@ -731,7 +750,7 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
     }
 
     printf("\tfatal error! huffman decode failed!\n");
-    printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
+    printf("\tdump info => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
     TRESPASS();
 
     return 0;
@@ -782,7 +801,7 @@ int RebuildBlock(struct ABitReader *abr, struct jpegParam *param, COLOR_TYPE col
         }
     }
     if (i==64) {
-        puts("Oops! somethings go wrong!");
+        puts("Oops! something goes wrong!");
         TRESPASS();
     }
 
@@ -952,7 +971,7 @@ int RebuildMCU1X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++)
-        memcpy(param->py_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+        memcpy(param->py_data+i*8*param->width+j*8+k*param->width, yuv[k], 8);
 
     //puts("--------Cb--------");
     param->cur_type = 1;
@@ -963,7 +982,7 @@ int RebuildMCU1X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++)
-        memcpy(param->pu_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+        memcpy(param->pu_data+i*8*param->width+j*8+k*param->width, yuv[k], 8);
 
     //puts("--------Cr--------");
     param->cur_type = 2;
@@ -974,7 +993,7 @@ int RebuildMCU1X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++)
-        memcpy(param->pv_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+        memcpy(param->pv_data+i*8*param->width+j*8+k*param->width, yuv[k], 8);
 
     return 0;
 }
@@ -1164,12 +1183,29 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     for (i=0; i<mcu_row; i++) {
         for (j=0; j<mcu_col; j++) {
             //printf("------------------block(%d,%d)----------------------\n", i, j);
+            if (param->restart_interval) {
+                if (param->scan_mcu_cnt++ == param->restart_interval) {
+                    //printf("need restart scan: [%#x] [%#x] [%#x] [%#x]\n", abr.data()[0], abr.data()[1], abr.data()[2], abr.data()[3]);
+                    int left_bits = abr.numBitsLeftInPart()%8;
+                    abr.skipBits(left_bits+16);
+                    param->scan_mcu_cnt = 1;
+                    param->YDC_last = 0;
+                    param->CbDC_last = 0;
+                    param->CrDC_last = 0;
+                }
+            }
+            if (i==56 && j==63) {
+                puts("-------break--------");
+                goto SKIP_SCAN;
+            }
             param->RebuildMCUFunc(&abr, param, &block1[0], &block2[0], &dst[0], i, j, dump);
+            //assert(0);
         }
     }
     printf("entropy end! offset[%#x], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
             abr.getOffset(), abr.data()[0], abr.data()[1], abr.data()[2]);
 
+SKIP_SCAN:
     gettimeofday(&end_tv, NULL);
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
@@ -1177,9 +1213,12 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     FILE *yuv_fp = fopen("test_pic.yuv", "wb");
 
     // yuv444 for 1x1.jpg
-    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    //fwrite(param->pu_data, 1, 1024*1024, yuv_fp);
-    //fwrite(param->pv_data, 1, 1024*1024, yuv_fp);
+    //fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->pu_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->pv_data, 1, param->width*param->height, yuv_fp);
+    fwrite(param->py_data, 1, param->width*57*8, yuv_fp);
+    fwrite(param->pu_data, 1, param->width*57*8, yuv_fp);
+    fwrite(param->pv_data, 1, param->width*57*8, yuv_fp);
 
     // nv21 for 1x1.jpg
     //fwrite(y_data, 1, 1024*1024, yuv_fp);
@@ -1193,9 +1232,9 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     //}
 
     // yuv420_3_plane for 2x2.jpg
-    fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    fwrite(param->pu_data, 1, 1024*1024/4, yuv_fp);
-    fwrite(param->pv_data, 1, 1024*1024/4, yuv_fp);
+    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
+    //fwrite(param->pu_data, 1, 1024*1024/4, yuv_fp);
+    //fwrite(param->pv_data, 1, 1024*1024/4, yuv_fp);
 
     // nv21 for 1x2.jpg
     //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
@@ -1227,7 +1266,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 int main(void)
 {
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("testrgb-2x2.jpg");
+    FileSource *pFS = new FileSource("graphis-1x1.jpg");
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
