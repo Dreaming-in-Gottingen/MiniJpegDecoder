@@ -29,6 +29,7 @@ using namespace codec_utils;
 
 enum {
     EOB = 1,
+    SPV = 2, // specical val, CodeVal=0xF0
 };
 
 enum COLOR_TYPE {
@@ -603,7 +604,7 @@ int HuffmanDecode2(struct ABitReader *abr, struct jpegParam *param, COLOR_TYPE c
                     {
                         *freq = 16;
                         *coef = 0;
-                        return 0;
+                        return SPV;
                     }
                     else if (code_val == 0x00) // EOB: all of below coefficient is 0
                     {
@@ -643,24 +644,30 @@ int HuffmanDecode2(struct ABitReader *abr, struct jpegParam *param, COLOR_TYPE c
 
 //implement huffman decode again!
 //(freq, coef): freq 0 before coef for RLC
-int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, int idx, int *freq, int *coef)
+int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, int idx, int *freq, int *coef, bool dump)
 {
     uint8_t *pCodeCnt = param->pHTCodeCnt[idx][color];
     uint16_t *pCode = param->pHTCode[idx][color];
     uint8_t *pCodeVal = param->pHTCodeVal[idx][color];
 
-    //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
+    if (dump)
+        printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
 
     uint16_t *pCodeStartPos = pCode;
     uint16_t code = 0;
     int cur_code_width = 2; //[2,16], may be 0 in pCodeCnt[cur_code_width-1]
+    if ((abr->numBitsLeftInPart()%8==0) && abr->data()[0]==0x00 && abr->data()[-1]==0xff)
+    {
+        //puts("extreme situation!!!");
+        abr->skipBits(8);
+    }
     code = abr->getBits(1);
     while (cur_code_width <= 16)
     {
         if (pCodeCnt[cur_code_width-1] == 0)
         {
             int num = abr->numBitsLeftInPart()%8;
-            if (num==0 && abr->data()[0]==0x00 && abr->data()[-1]==0xff) {
+            if (num==0 && (abr->data()[0]==0x00 || abr->data()[0]==0xff) && abr->data()[-1]==0xff) {
                 //printf("Be careful! offset:%#x, [%#x,%#x], [%#x,%#x]\n", abr->getOffset(), abr->data()[-3], abr->data()[-2], abr->data()[-1], abr->data()[0]);
                 abr->skipBits(8);
             }
@@ -671,7 +678,7 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
         else
         {
             int num = abr->numBitsLeftInPart()%8;
-            if (num==0 && abr->data()[0]==0x00 && abr->data()[-1]==0xff) {
+            if (num==0 && (abr->data()[0]==0x00 || abr->data()[0]==0xff) && abr->data()[-1]==0xff) {
                 //printf("Be careful! offset:%#x, [%#x,%#x], [%#x,%#x]\n", abr->getOffset(), abr->data()[-3], abr->data()[-2], abr->data()[-1], abr->data()[0]);
                 abr->skipBits(8);
             }
@@ -717,7 +724,7 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
                     {
                         *freq = 16;
                         *coef = 0;
-                        return 0;
+                        return SPV;
                     }
                     else if (code_val == 0x00) // EOB: all of below coefficient is 0
                     {
@@ -767,7 +774,7 @@ int RebuildBlock(struct ABitReader *abr, struct jpegParam *param, COLOR_TYPE col
     int cnt, coef;
 
     //DC
-    int ret = HuffmanDecode3(abr, param, color, COEF_DC, &cnt, &coef);
+    int ret = HuffmanDecode3(abr, param, color, COEF_DC, &cnt, &coef, dump);
     switch (param->cur_type) {
         case 0:
             coef += param->YDC_last;
@@ -790,13 +797,14 @@ int RebuildBlock(struct ABitReader *abr, struct jpegParam *param, COLOR_TYPE col
     //AC
     int i;
     for (i=1; i<64; i++) {
-        ret = HuffmanDecode3(abr, param, color, COEF_AC, &cnt, &coef);
+        ret = HuffmanDecode3(abr, param, color, COEF_AC, &cnt, &coef, dump);
         while(cnt--) {
             *ptr++ = 0;
         }
-        *ptr++ = coef;
+        if (ret != SPV)
+            *ptr++ = coef;
 
-        if (ret == EOB) {
+        if (ret==EOB || (ptr-block)>=64) {
             break;
         }
     }
@@ -1112,13 +1120,13 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
         JpegCopyYUV(&yuv[0], &dst[0], dump);
         for (int k=0; k<8; k++) {
             if (cnt==0)
-                memcpy(param->py_data+i*16*1024+j*16+k*1024, yuv[k], 8);
+                memcpy(param->py_data+i*16*param->width+j*16+k*param->width, yuv[k], 8);
             else if (cnt==1)
-                memcpy(param->py_data+i*16*1024+j*16+8+k*1024, yuv[k], 8);
+                memcpy(param->py_data+i*16*param->width+j*16+8+k*param->width, yuv[k], 8);
             else if (cnt==2)
-                memcpy(param->py_data+i*16*1024+8*1024+j*16+k*1024, yuv[k], 8);
+                memcpy(param->py_data+i*16*param->width+8*param->width+j*16+k*param->width, yuv[k], 8);
             else if (cnt==3)
-                memcpy(param->py_data+i*16*1024+8*1024+8+j*16+k*1024, yuv[k], 8);
+                memcpy(param->py_data+i*16*param->width+8*param->width+8+j*16+k*param->width, yuv[k], 8);
         }
     }
 
@@ -1131,7 +1139,7 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++) {
-        memcpy(param->pu_data+i*8*512+j*8+k*512, yuv[k], 8);
+        memcpy(param->pu_data+i*8*param->width/2+j*8+k*param->width/2, yuv[k], 8);
     }
 
     //puts("--------Cr--------");
@@ -1143,7 +1151,7 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++) {
-        memcpy(param->pv_data+i*8*512+j*8+k*512, yuv[k], 8);
+        memcpy(param->pv_data+i*8*param->width/2+j*8+k*param->width/2, yuv[k], 8);
     }
 
     return 0;
@@ -1168,57 +1176,64 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     struct timeval begin_tv, end_tv;
     gettimeofday(&begin_tv, NULL);
 
-    param->py_data = (uint8_t*)malloc(param->width*param->height);
-    param->pu_data = (uint8_t*)malloc(param->width*param->height);
-    param->pv_data = (uint8_t*)malloc(param->width*param->height);
+    param->py_data = (uint8_t*)malloc((param->width+15)/16*16*(param->height+15)/16*16);
+    param->pu_data = (uint8_t*)malloc((param->width+15)/16*16*(param->height+15)/16*16);
+    param->pv_data = (uint8_t*)malloc((param->width+15)/16*16*(param->height+15)/16*16);
 
     printf("entropy begin! offset[%#x]\n", offset);
     int i,j;
     int *pos1 = &block1[0][0];
     int *pos2 = &block2[0][0];
 
+    int mcu_row;
+    int mcu_col;
+    if (param->vfactor[0]==1) {
+        mcu_row = (param->height+7)/8;
+    } else if (param->vfactor[0]==2) {
+        mcu_row = (param->height+15)/16;
+    }
+    if (param->hfactor[0]==1) {
+        mcu_col = (param->width+7)/8;
+    } else if (param->hfactor[0]==2) {
+        mcu_col = (param->width+15)/16;
+    }
+
     bool dump = false;
-    int mcu_row = param->height/8/param->vfactor[0];
-    int mcu_col = param->width/8/param->hfactor[0];
+    printf("mcu_row:%d, mcu_col:%d\n", mcu_row, mcu_col);
     for (i=0; i<mcu_row; i++) {
         for (j=0; j<mcu_col; j++) {
-            //printf("------------------block(%d,%d)----------------------\n", i, j);
+            if (dump)
+                printf("------------------block(%d,%d)----------------------\n", i, j);
             if (param->restart_interval) {
                 if (param->scan_mcu_cnt++ == param->restart_interval) {
                     //printf("need restart scan: [%#x] [%#x] [%#x] [%#x]\n", abr.data()[0], abr.data()[1], abr.data()[2], abr.data()[3]);
                     int left_bits = abr.numBitsLeftInPart()%8;
-                    abr.skipBits(left_bits+16);
+                    if (abr.data()[0]==0xff && abr.data()[1]==0)    //process case: 0xff 0x00 0xff 0xDx
+                        abr.skipBits(left_bits+24);
+                    else                                            //other case without 0x00
+                        abr.skipBits(left_bits+16);
                     param->scan_mcu_cnt = 1;
                     param->YDC_last = 0;
                     param->CbDC_last = 0;
                     param->CrDC_last = 0;
                 }
             }
-            if (i==56 && j==63) {
-                puts("-------break--------");
-                goto SKIP_SCAN;
-            }
             param->RebuildMCUFunc(&abr, param, &block1[0], &block2[0], &dst[0], i, j, dump);
-            //assert(0);
         }
     }
     printf("entropy end! offset[%#x], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
             abr.getOffset(), abr.data()[0], abr.data()[1], abr.data()[2]);
 
-SKIP_SCAN:
     gettimeofday(&end_tv, NULL);
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    FILE *yuv_fp = fopen("test_pic.yuv", "wb");
+    FILE *yuv_fp = fopen("graphis-1x1.yuv", "wb");
 
     // yuv444 for 1x1.jpg
-    //fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
-    //fwrite(param->pu_data, 1, param->width*param->height, yuv_fp);
-    //fwrite(param->pv_data, 1, param->width*param->height, yuv_fp);
-    fwrite(param->py_data, 1, param->width*57*8, yuv_fp);
-    fwrite(param->pu_data, 1, param->width*57*8, yuv_fp);
-    fwrite(param->pv_data, 1, param->width*57*8, yuv_fp);
+    fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
+    fwrite(param->pu_data, 1, param->width*param->height, yuv_fp);
+    fwrite(param->pv_data, 1, param->width*param->height, yuv_fp);
 
     // nv21 for 1x1.jpg
     //fwrite(y_data, 1, 1024*1024, yuv_fp);
@@ -1232,9 +1247,9 @@ SKIP_SCAN:
     //}
 
     // yuv420_3_plane for 2x2.jpg
-    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    //fwrite(param->pu_data, 1, 1024*1024/4, yuv_fp);
-    //fwrite(param->pv_data, 1, 1024*1024/4, yuv_fp);
+    //fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->pu_data, 1, param->width*param->height/4, yuv_fp);
+    //fwrite(param->pv_data, 1, param->width*param->height/4, yuv_fp);
 
     // nv21 for 1x2.jpg
     //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
