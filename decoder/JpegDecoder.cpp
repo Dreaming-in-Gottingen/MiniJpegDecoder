@@ -184,15 +184,16 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
         pWidth = param->pHTCodeWidth[idx_high][idx_low];
 
         //generate pHTCode[idx_high][idx_low]
-        uint16_t *pCode = (uint16_t*)malloc(2*total_code_cnt);   //huffman code width: 2~16 bits
+        uint16_t *pCode = (uint16_t*)malloc(2*total_code_cnt);   //huffman code width: 2~16 bits -> may 1 bits! but HuffmanDecode3 can not handle this!
         param->pHTCode[idx_high][idx_low] = pCode;
-        uint16_t last_code = 0;
+        bool init_flag = false;
         for (i=0; i<16; i++) {
             int j = 0;
             uint16_t tmp;
             while (j++ < pCodeCnt[i]) {
-                if ((i==1) && (j==1)) {
-                    *pCode = 0;
+                if ((i==1 || i==0) && (j==1) && (init_flag==false)) {
+                    *pCode = 0;             //init val
+                    init_flag = true;
                 } else if (j == 1) {        //first add x bits
                     int k = i;
                     int shift_bits = 1;
@@ -205,7 +206,7 @@ int parseDHT(ABitReader* abr, struct jpegParam* param)
                     tmp = *pCode + 1;
                     *++pCode = tmp;
                 }
-                //printf("i:%d, j:%d, (%d , %d)=> %#x\n", i, j, pCodeCnt[i], pWidth[i], *pCode);
+                //printf("i:%d, j:%d, (%d , %d) => %#x\n", i, j, pCodeCnt[i], pWidth[i], *pCode);
             }
         }
 
@@ -386,7 +387,7 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
         //puts("extreme situation!!!");
         abr->skipBits(8);
     }
-    code = abr->getBits(1);
+    code = abr->getBits(1); //we assume that the minimum width is 2.
     while (cur_code_width <= 16)
     {
         if (pCodeCnt[cur_code_width-1] == 0)
@@ -835,7 +836,8 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     float dst[8][8];
 
     for (int cnt=0; cnt<4; cnt++) {
-        //printf("--------Y[%d]--------\n", cnt);
+        if (dump)
+            printf("--------Y[%d]--------\n", cnt);
         param->cur_type = 0;
         RebuildBlock(pabr, param, COLOR_Y, &block1[0][0], dump);          //IDPCM + IRLC
         JpegDequantization(pabr, param, &block1[0][0], dump);             //IQS
@@ -855,7 +857,8 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
         }
     }
 
-    //puts("--------Cb--------");
+    if (dump)
+        puts("--------Cb--------");
     param->cur_type = 1;
     RebuildBlock(pabr, param, COLOR_UV, &block1[0][0], dump);
     JpegDequantization(pabr, param, &block1[0][0], dump);
@@ -867,7 +870,8 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
         memcpy(param->pu_data+i*8*param->width/2+j*8+k*param->width/2, yuv[k], 8);
     }
 
-    //puts("--------Cr--------");
+    if (dump)
+        puts("--------Cr--------");
     param->cur_type = 2;
     RebuildBlock(pabr, param, COLOR_UV, &block1[0][0], dump);
     JpegDequantization(pabr, param, &block1[0][0], dump);
@@ -953,12 +957,12 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    FILE *yuv_fp = fopen("graphis-1x1.yuv", "wb");
+    FILE *yuv_fp = fopen("autumn.yuv", "wb");
 
     // yuv444 for 1x1.jpg
-    fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
-    fwrite(param->pu_data, 1, param->width*param->height, yuv_fp);
-    fwrite(param->pv_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->pu_data, 1, param->width*param->height, yuv_fp);
+    //fwrite(param->pv_data, 1, param->width*param->height, yuv_fp);
 
     // nv21 for 1x1.jpg
     //fwrite(y_data, 1, 1024*1024, yuv_fp);
@@ -972,9 +976,9 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     //}
 
     // yuv420_3_plane for 2x2.jpg
-    //fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
-    //fwrite(param->pu_data, 1, param->width*param->height/4, yuv_fp);
-    //fwrite(param->pv_data, 1, param->width*param->height/4, yuv_fp);
+    fwrite(param->py_data, 1, param->width*param->height, yuv_fp);
+    fwrite(param->pu_data, 1, param->width*param->height/4, yuv_fp);
+    fwrite(param->pv_data, 1, param->width*param->height/4, yuv_fp);
 
     // nv21 for 1x2.jpg
     //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
@@ -1006,7 +1010,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 int main(void)
 {
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("graphis-1x1.jpg");
+    FileSource *pFS = new FileSource("autumn.jpg");
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
