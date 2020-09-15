@@ -696,7 +696,7 @@ inline int JpegCopyYUV(uint8_t (*dst)[8], float (*src)[8], bool dump)
     int i,j;
     for (i=0; i<8; i++) {
         for (j=0; j<8; j++) {
-            dst[i][j] = (uint8_t)src[i][j];
+            dst[i][j] = (uint8_t)(src[i][j]>0.0 ? (src[i][j]>255?255:src[i][j]): -src[i][j]);
         }
     }
 
