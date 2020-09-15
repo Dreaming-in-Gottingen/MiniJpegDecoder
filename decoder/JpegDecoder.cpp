@@ -382,13 +382,14 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
 
     uint16_t *pCodeStartPos = pCode;
     uint16_t code = 0;
-    int cur_code_width = 2; //[2,16], may be 0 in pCodeCnt[cur_code_width-1]
+    //int cur_code_width = 2; //[2,16], may be 0 in pCodeCnt[cur_code_width-1]
+    int cur_code_width = 1; //minimum bit width maybe 1, but meet that case rarely.
     if ((abr->numBitsLeftInPart()%8==0) && abr->data()[0]==0x00 && abr->data()[-1]==0xff)
     {
         //puts("extreme situation!!!");
         abr->skipBits(8);
     }
-    code = abr->getBits(1); //we assume that the minimum width is 2.
+    //code = abr->getBits(1); //we assume that the minimum width is 2.
     while (cur_code_width <= 16)
     {
         if (pCodeCnt[cur_code_width-1] == 0)
@@ -977,7 +978,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    FILE *yuv_fp = fopen("autumn.yuv", "wb");
+    FILE *yuv_fp = fopen("legends.yuv", "wb");
 
     // yuv444 for 1x1.jpg
     //fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
@@ -1030,7 +1031,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 int main(void)
 {
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("autumn.jpg");
+    FileSource *pFS = new FileSource("legends.jpg");
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
