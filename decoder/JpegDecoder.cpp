@@ -703,6 +703,12 @@ inline int JpegCopyYUV(uint8_t (*dst)[8], float (*src)[8], bool dump)
     return 0;
 }
 
+/* y_h/v_factor=(1,1)
+ * MCU1X1
+ *  .---.
+ *  | 0 |
+ *  `---'
+ */
 // mcu_size:8x8, Y, U, V
 int RebuildMCU1X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1)[8], int (*block2)[8], float (*pdst)[8], int i, int j, bool dump)
 {
@@ -748,7 +754,15 @@ int RebuildMCU1X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     return 0;
 }
 
-// mcu_size:16x8, Y00+Y10, U, V
+/* y_h/v_factor=(1,2)
+ *  MCU1X2
+ *  .---.
+ *  | 0 |
+ *  |---|
+ *  | 1 |
+ *  `---'
+ */
+// mcu_size:8x16, Y00+Y10, U, V
 int RebuildMCU1X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1)[8], int (*block2)[8], float (*pdst)[8], int i, int j, bool dump)
 {
     uint8_t yuv[8][8];
@@ -764,10 +778,7 @@ int RebuildMCU1X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
         JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
         JpegCopyYUV(&yuv[0], &dst[0], dump);
         for (int k=0; k<8; k++) {
-            if (cnt==0)
-                memcpy(param->py_data+i*16*1024+j*8+k*1024, yuv[k], 8);
-            else if (cnt==1)
-                memcpy(param->py_data+i*16*1024+8*1024+j*8+k*1024, yuv[k], 8);
+            memcpy(param->py_data+i*16*param->row_stride+cnt*8*param->row_stride+j*8+k*param->row_stride, yuv[k], 8);
         }
     }
 
@@ -780,7 +791,7 @@ int RebuildMCU1X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++) {
-        memcpy(param->pu_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+        memcpy(param->pu_data+i*8*param->row_stride+j*8+k*param->row_stride, yuv[k], 8);
     }
 
     //puts("--------Cr--------");
@@ -792,13 +803,19 @@ int RebuildMCU1X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++) {
-        memcpy(param->pv_data+i*8*1024+j*8+k*1024, yuv[k], 8);
+        memcpy(param->pv_data+i*8*param->row_stride+j*8+k*param->row_stride, yuv[k], 8);
     }
 
     return 0;
 }
 
-// mcu_size:8x16, Y00+Y01, U, V
+/*  y_h/v_factor=(2,1)
+ *   MCU2X1
+ *  .---.---.
+ *  | 0 | 1 |
+ *  `---'---'
+ */
+// mcu_size:16x8, Y00+Y01, U, V
 int RebuildMCU2X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1)[8], int (*block2)[8], float (*pdst)[8], int i, int j, bool dump)
 {
     uint8_t yuv[8][8];
@@ -813,10 +830,7 @@ int RebuildMCU2X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
         JpegReLevelOffset(&dst[0], dump);                                 //ILevelOffset
         JpegCopyYUV(&yuv[0], &dst[0], dump);
         for (int k=0; k<8; k++) {
-            if (cnt==0)
-                memcpy(param->py_data+i*8*1024+j*16+k*1024, yuv[k], 8);
-            else if (cnt==1)
-                memcpy(param->py_data+i*8*1024+8+j*16+k*1024, yuv[k], 8);
+            memcpy(param->py_data+i*8*param->row_stride+8*cnt+j*16+k*param->row_stride, yuv[k], 8);
         }
     }
 
@@ -829,7 +843,7 @@ int RebuildMCU2X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++)
-        memcpy(param->pu_data+i*8*512+j*8+k*512, yuv[k], 8);
+        memcpy(param->pu_data+i*8*param->row_stride/2+j*8+k*param->row_stride/2, yuv[k], 8);
 
     //puts("--------Cr--------");
     param->cur_type = 2;
@@ -840,11 +854,19 @@ int RebuildMCU2X1(struct ABitReader *pabr, struct jpegParam *param, int (*block1
     JpegReLevelOffset(&dst[0], dump);
     JpegCopyYUV(&yuv[0], &dst[0], dump);
     for (int k=0; k<8; k++)
-        memcpy(param->pv_data+i*8*512+j*8+k*512, yuv[k], 8);
+        memcpy(param->pv_data+i*8*param->row_stride/2+j*8+k*param->row_stride/2, yuv[k], 8);
 
     return 0;
 }
 
+/* y_h/v_factor=(2,2)
+ *   MCU2X2
+ *  .---.---.
+ *  | 0 | 1 |
+ *  |---'---|
+ *  | 2 | 3 |
+ *  `---'---'
+ */
 // mcu_size:16x16, Y00+Y01+Y10+Y11, U, V
 int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1)[8], int (*block2)[8], float (*pdst)[8], int i, int j, bool dump)
 {
@@ -929,6 +951,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 
     int mcu_row_cnt;
     int mcu_col_cnt;
+
     if (param->vfactor[0]==1) {
         mcu_row_cnt = (param->height+7)/8;
         param->column_stride = mcu_row_cnt*8;
@@ -936,6 +959,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
         mcu_row_cnt= (param->height+15)/16;
         param->column_stride = mcu_row_cnt*16;
     }
+
     if (param->hfactor[0]==1) {
         mcu_col_cnt = (param->width+7)/8;
         param->row_stride = mcu_col_cnt*8;
@@ -950,6 +974,7 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 
     bool dump = false;
     printf("mcu_row_cnt:%d, mcu_col_cnt:%d\n", mcu_row_cnt, mcu_col_cnt);
+    printf("row/col_stride:(%d x %d), w/h:(%d x %d)\n", param->row_stride, param->column_stride, param->width, param->height);
     for (i=0; i<mcu_row_cnt; i++) {
         for (j=0; j<mcu_col_cnt; j++) {
             if (dump)
@@ -971,55 +996,69 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
             param->RebuildMCUFunc(&abr, param, &block1[0], &block2[0], &dst[0], i, j, dump);
         }
     }
-    printf("entropy end! offset[%#x], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
-            abr.getOffset(), abr.data()[0], abr.data()[1], abr.data()[2]);
+    printf("entropy end! offset[%#x], left_bits[%d], cur_data[%#x], last_two_bytes:[%#x %#x] should be EOI:[0xFF 0xD9]\n",
+            abr.getOffset(), abr.numBitsLeftInPart()%8, abr.data()[0], abr.data()[1], abr.data()[2]);
 
     gettimeofday(&end_tv, NULL);
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    FILE *yuv_fp = fopen("legends.yuv", "wb");
+    char file_name[64];
+    sprintf(file_name, "mjd_%d_%d.yuv", param->row_stride, param->column_stride);
+    FILE *yuv_fp = fopen(file_name, "wb");
 
     // yuv444 for 1x1.jpg
-    //fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
-    //fwrite(param->pu_data, 1, param->row_stride*param->column_stride, yuv_fp);
-    //fwrite(param->pv_data, 1, param->row_stride*param->column_stride, yuv_fp);
+    if (param->hfactor[0]==1 && param->vfactor[0]==1)
+    {
+        fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
+        fwrite(param->pu_data, 1, param->row_stride*param->column_stride, yuv_fp);
+        fwrite(param->pv_data, 1, param->row_stride*param->column_stride, yuv_fp);
+    }
 
     // nv21 for 1x1.jpg
-    //fwrite(y_data, 1, 1024*1024, yuv_fp);
-    //for (int i=0; i<1024; i+=2)
+    //fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
+    //for (int i=0; i<param->column_stride; i+=2)
     //{
-    //    for (int j=0; j<1024; j+=2)
+    //    for (int j=0; j<param->row_stride; j+=2)
     //    {
-    //        fwrite(v_data+i*1024+j, 1, 1, yuv_fp);
-    //        fwrite(u_data+i*1024+j, 1, 1, yuv_fp);
+    //        fwrite(param->pv_data+i*param->row_stride+j, 1, 1, yuv_fp);
+    //        fwrite(param->pu_data+i*param->row_stride+j, 1, 1, yuv_fp);
     //    }
     //}
 
     // yuv420_3_plane for 2x2.jpg
-    fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
-    fwrite(param->pu_data, 1, param->row_stride*param->column_stride/4, yuv_fp);
-    fwrite(param->pv_data, 1, param->row_stride*param->column_stride/4, yuv_fp);
+    if (param->hfactor[0]==2 && param->vfactor[0]==2)
+    {
+        fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
+        fwrite(param->pu_data, 1, param->row_stride*param->column_stride/4, yuv_fp);
+        fwrite(param->pv_data, 1, param->row_stride*param->column_stride/4, yuv_fp);
+    }
 
     // nv21 for 1x2.jpg
-    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    //for (int i=0; i<512; i++)
-    //{
-    //    for (int j=0; j<1024; j+=2)
-    //    {
-    //        fwrite(param->pv_data+i*1024+j, 1, 1, yuv_fp);
-    //        fwrite(param->pu_data+i*1024+j, 1, 1, yuv_fp);
-    //    }
-    //}
+    if (param->hfactor[0]==1 && param->vfactor[0]==2)
+    {
+        fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
+        for (int i=0; i<param->column_stride/2; i++)
+        {
+            for (int j=0; j<param->row_stride; j+=2)
+            {
+                fwrite(param->pv_data+i*param->row_stride+j, 1, 1, yuv_fp);
+                fwrite(param->pu_data+i*param->row_stride+j, 1, 1, yuv_fp);
+            }
+        }
+    }
 
     // yuv420_3_plane for 2x1.jpg
-    //fwrite(param->py_data, 1, 1024*1024, yuv_fp);
-    //for (int i=0; i<1024; i+=2)
-    //    for (int j=0; j<64; j++)
-    //        fwrite(param->pu_data+i*512+j*8, 1, 8, yuv_fp);
-    //for (int i=0; i<1024; i+=2)
-    //    for (int j=0; j<64; j++)
-    //        fwrite(param->pv_data+i*512+j*8, 1, 8, yuv_fp);
+    if (param->hfactor[0]==2 && param->vfactor[0]==1)
+    {
+        fwrite(param->py_data, 1, param->row_stride*param->column_stride, yuv_fp);
+        for (int i=0; i<param->column_stride; i+=2)
+            for (int j=0; j<mcu_col_cnt; j++)
+                fwrite(param->pu_data+i*param->row_stride/2+j*8, 1, 8, yuv_fp);
+        for (int i=0; i<param->column_stride; i+=2)
+            for (int j=0; j<mcu_col_cnt; j++)
+                fwrite(param->pv_data+i*param->row_stride/2+j*8, 1, 8, yuv_fp);
+    }
 
     fclose(yuv_fp);
 
@@ -1028,10 +1067,15 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     return 0;
 }
 
-int main(void)
+int main(int argc, char**argv)
 {
+    if (argc != 2)
+    {
+        puts("error input! format: JpegDecoder filename");
+        return -1;
+    }
     cout<<"------begin-------"<<endl;
-    FileSource *pFS = new FileSource("legends.jpg");
+    FileSource *pFS = new FileSource(argv[1]);
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
 
