@@ -87,6 +87,9 @@ struct jpegParam {
     uint8_t *py_data;
     uint8_t *pu_data;
     uint8_t *pv_data;
+
+    char *input_path;
+    char *output_path;
 };
 
 static const uint8_t zigzag[64] =
@@ -943,7 +946,6 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     struct timeval begin_tv, end_tv;
     gettimeofday(&begin_tv, NULL);
 
-
     printf("entropy begin! offset[%#x]\n", offset);
     int i,j;
     int *pos1 = &block1[0][0];
@@ -1003,9 +1005,31 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     long time_dura_us = (end_tv.tv_sec - begin_tv.tv_sec)*1000000 + (end_tv.tv_usec - begin_tv.tv_usec);
     printf("jpeg entropy time duration: [%ld] us\n", time_dura_us);
 
-    char file_name[64];
-    sprintf(file_name, "mjd_%d_%d.yuv", param->row_stride, param->column_stride);
-    FILE *yuv_fp = fopen(file_name, "wb");
+    char output_file_name[64] = "";
+    int len = strlen(param->input_path);
+    strncpy(output_file_name, param->input_path, len-4);
+
+    char fmt[16] = "";
+    if (param->hfactor[0]==1 && param->vfactor[0]==1) {
+        strcpy(fmt, "yuv444");
+    } else if (param->hfactor[0]==2 && param->vfactor[0]==2) {
+        strcpy(fmt, "yuv420");
+    } else if (param->hfactor[0]==1 && param->vfactor[0]==2) {
+        strcpy(fmt, "nv21");
+    } else if (param->hfactor[0]==2 && param->vfactor[0]==1){
+        strcpy(fmt, "yuv420");
+    } else {
+        printf("unknown jpeg fmt: hfactor[%d],vfactor[%d]\n", param->hfactor[0], param->vfactor[0]);
+        assert(0);
+    }
+
+    char surffix[64] = "";
+    sprintf(surffix, "_%d_%d_%s.yuv", param->row_stride, param->column_stride, fmt);
+
+    strcat(output_file_name, surffix);
+    printf("output_file:[%s]\n", output_file_name);
+
+    FILE *yuv_fp = fopen(output_file_name, "wb");
 
     // yuv444 for 1x1.jpg
     if (param->hfactor[0]==1 && param->vfactor[0]==1)
@@ -1062,6 +1086,9 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
 
     fclose(yuv_fp);
 
+    free(param->py_data);
+    free(param->pu_data);
+    free(param->pv_data);
     free(buf);
 
     return 0;
@@ -1071,21 +1098,29 @@ int main(int argc, char**argv)
 {
     if (argc != 2)
     {
-        puts("error input! format: JpegDecoder filename");
+        puts("error input! format: JpegDecoder <filename.jpg>");
         return -1;
     }
-    cout<<"------begin-------"<<endl;
+    if (access(argv[1], F_OK)!=0)
+    {
+        printf("file[%s] not exist!\n", argv[1]);
+        return -1;
+    }
+
+    printf("MiniJpegDecoder begin to decode file[%s]...\n", argv[1]);
     FileSource *pFS = new FileSource(argv[1]);
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
+    param.input_path = argv[1];
 
     off64_t sz;
     pFS->getSize(&sz);
-    cout<<"sz: "<<sz<<endl;
+    printf("[%s] input_file size = %d Bytes\n", argv[1], sz);
 
     uint8_t *buf = (uint8_t*)malloc(4096);
     pFS->readAt(0, buf, 4096);
     struct ABitReader abr(buf, 4096);
+    free(buf);
 
     int offset = ParseJpegHeader(pFS, &param);
     if (offset<0) {
@@ -1094,8 +1129,34 @@ int main(int argc, char**argv)
         JpegDecode(pFS, &param, offset);
     }
 
+    free(param.pQT[0]);
+    free(param.pQT[1]);
+    free(param.pQT[2]);
+    free(param.pQT[3]);
+
+    free(param.pHTCodeCnt[0][0]);
+    free(param.pHTCodeCnt[0][1]);
+    free(param.pHTCodeCnt[1][0]);
+    free(param.pHTCodeCnt[1][1]);
+
+    free(param.pHTCodeWidth[0][0]);
+    free(param.pHTCodeWidth[0][1]);
+    free(param.pHTCodeWidth[1][0]);
+    free(param.pHTCodeWidth[1][1]);
+
+    free(param.pHTCode[0][0]);
+    free(param.pHTCode[0][1]);
+    free(param.pHTCode[1][0]);
+    free(param.pHTCode[1][1]);
+
+    free(param.pHTCodeVal[0][0]);
+    free(param.pHTCodeVal[0][1]);
+    free(param.pHTCodeVal[1][0]);
+    free(param.pHTCodeVal[1][1]);
+
     delete pFS;
-    cout<<"------end-------"<<endl;
+
+    printf("MiniJpegDecoder finish decoding file[%s]!\n", argv[1]);
 
     return 0;
 }
