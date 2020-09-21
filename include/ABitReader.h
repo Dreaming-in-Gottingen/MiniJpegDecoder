@@ -39,7 +39,7 @@ struct ABitReader {
 
     const uint8_t *data() const;
 
-    off32_t getOffset() const;
+    int32_t getOffset() const;
 
 private:
     const uint8_t *const mpInitial;

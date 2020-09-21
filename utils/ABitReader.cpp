@@ -101,7 +101,7 @@ const uint8_t *ABitReader::data() const {
     return mpData - (mNumBitsLeft + 7) / 8;
 }
 
-off32_t ABitReader::getOffset() const {
+int32_t ABitReader::getOffset() const {
     return data() - mpInitial;
 }
 
