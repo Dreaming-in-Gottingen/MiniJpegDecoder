@@ -380,8 +380,7 @@ int HuffmanDecode3(struct ABitReader *abr, struct jpegParam *param, int color, i
     uint16_t *pCode = param->pHTCode[idx][color];
     uint8_t *pCodeVal = param->pHTCodeVal[idx][color];
 
-    if (dump)
-        printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
+    //printf("\tHuffmanDecodeDebug => offset:%#x, val:%#x, bitsLeft:%d\n", abr->getOffset(), *abr->data(), abr->numBitsLeftInPart());
 
     uint16_t *pCodeStartPos = pCode;
     uint16_t code = 0;
@@ -928,7 +927,7 @@ int RebuildMCU2X2(struct ABitReader *pabr, struct jpegParam *param, int (*block1
 }
 
 // IDPCM + IRLC + IQS + IZigzag + IDCT + ILevelOffset
-int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
+int JpegDecode(FileSource *fs, struct jpegParam *param, int offset, int mcu_x, int mcu_y)
 {
     int width, height;
     int block1[8][8];
@@ -979,8 +978,12 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     printf("row/col_stride:(%d x %d), w/h:(%d x %d)\n", param->row_stride, param->column_stride, param->width, param->height);
     for (i=0; i<mcu_row_cnt; i++) {
         for (j=0; j<mcu_col_cnt; j++) {
-            if (dump)
+            if (mcu_x==i && mcu_y==j) {
+                dump = true;
                 printf("------------------block(%d,%d)----------------------\n", i, j);
+            } else {
+                dump = false;
+            }
             if (param->restart_interval) {
                 if (param->scan_mcu_cnt++ == param->restart_interval) {
                     //printf("need restart scan: [%#x] [%#x] [%#x] [%#x]\n", abr.data()[0], abr.data()[1], abr.data()[2], abr.data()[3]);
@@ -1094,11 +1097,41 @@ int JpegDecode(FileSource *fs, struct jpegParam *param, int offset)
     return 0;
 }
 
+void JpegMemFree(struct jpegParam *param)
+{
+    free(param->pQT[0]);
+    free(param->pQT[1]);
+    free(param->pQT[2]);
+    free(param->pQT[3]);
+
+    free(param->pHTCodeCnt[0][0]);
+    free(param->pHTCodeCnt[0][1]);
+    free(param->pHTCodeCnt[1][0]);
+    free(param->pHTCodeCnt[1][1]);
+
+    free(param->pHTCodeWidth[0][0]);
+    free(param->pHTCodeWidth[0][1]);
+    free(param->pHTCodeWidth[1][0]);
+    free(param->pHTCodeWidth[1][1]);
+
+    free(param->pHTCode[0][0]);
+    free(param->pHTCode[0][1]);
+    free(param->pHTCode[1][0]);
+    free(param->pHTCode[1][1]);
+
+    free(param->pHTCodeVal[0][0]);
+    free(param->pHTCodeVal[0][1]);
+    free(param->pHTCodeVal[1][0]);
+    free(param->pHTCodeVal[1][1]);
+}
+
 int main(int argc, char**argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 5)
     {
-        puts("error input! format: JpegDecoder <filename.jpg>");
+        puts("error input! two mode: 1.you can just get yuv file; 2.you can both get yuv file and dump mcu info for (x,y).");
+        puts("mode1 cmd format: JpegDecoder <filename.jpg>");
+        puts("mode2 cmd format: JpegDecoder <filename.jpg> mcu x y");
         return -1;
     }
     if (access(argv[1], F_OK)!=0)
@@ -1107,7 +1140,16 @@ int main(int argc, char**argv)
         return -1;
     }
 
-    printf("MiniJpegDecoder begin to decode file[%s]...\n", argv[1]);
+    int mcu_x=-1, mcu_y=-1;
+    if (argc == 2)
+    {
+        printf("MiniJpegDecoder begin to decode file[%s]...\n", argv[1]);
+    } else if (argc == 5) {
+        mcu_x = atoi(argv[3]);
+        mcu_y = atoi(argv[4]);
+        printf("MiniJpegDecoder begin to decode file[%s] and dump mcu(%d,%d)...\n", argv[1], mcu_x, mcu_y);
+    }
+
     FileSource *pFS = new FileSource(argv[1]);
     struct jpegParam param;
     memset(&param, 0, sizeof(param));
@@ -1126,34 +1168,9 @@ int main(int argc, char**argv)
     if (offset<0) {
         puts("parse jpeg header failed!");
     } else {
-        JpegDecode(pFS, &param, offset);
+        JpegDecode(pFS, &param, offset, mcu_x, mcu_y);
     }
-
-    free(param.pQT[0]);
-    free(param.pQT[1]);
-    free(param.pQT[2]);
-    free(param.pQT[3]);
-
-    free(param.pHTCodeCnt[0][0]);
-    free(param.pHTCodeCnt[0][1]);
-    free(param.pHTCodeCnt[1][0]);
-    free(param.pHTCodeCnt[1][1]);
-
-    free(param.pHTCodeWidth[0][0]);
-    free(param.pHTCodeWidth[0][1]);
-    free(param.pHTCodeWidth[1][0]);
-    free(param.pHTCodeWidth[1][1]);
-
-    free(param.pHTCode[0][0]);
-    free(param.pHTCode[0][1]);
-    free(param.pHTCode[1][0]);
-    free(param.pHTCode[1][1]);
-
-    free(param.pHTCodeVal[0][0]);
-    free(param.pHTCodeVal[0][1]);
-    free(param.pHTCodeVal[1][0]);
-    free(param.pHTCodeVal[1][1]);
-
+    JpegMemFree(&param);
     delete pFS;
 
     printf("MiniJpegDecoder finish decoding file[%s]!\n", argv[1]);
