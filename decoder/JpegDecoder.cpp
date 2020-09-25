@@ -1162,7 +1162,6 @@ int main(int argc, char**argv)
     uint8_t *buf = (uint8_t*)malloc(4096);
     pFS->readAt(0, buf, 4096);
     struct ABitReader abr(buf, 4096);
-    free(buf);
 
     int offset = ParseJpegHeader(pFS, &param);
     if (offset<0) {
@@ -1171,6 +1170,8 @@ int main(int argc, char**argv)
         JpegDecode(pFS, &param, offset, mcu_x, mcu_y);
     }
     JpegMemFree(&param);
+
+    free(buf);
     delete pFS;
 
     printf("MiniJpegDecoder finish decoding file[%s]!\n", argv[1]);
