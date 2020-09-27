@@ -29,7 +29,12 @@ FileSource::FileSource(const char *filename)
       mOffset(0),
       mLength(-1) {
 
+#if defined(_WIN32) || defined(_WIN64)
+    /* avoid read '0x0A' from '0x0D' '0x0A' on Windows platform */
+    mFd = open(filename, O_RDONLY|O_BINARY);
+#else
     mFd = open(filename, O_RDONLY);
+#endif
 
     if (mFd >= 0) {
         mLength = lseek64(mFd, 0, SEEK_END);
