@@ -25,6 +25,10 @@ using namespace codec_utils;
 #define DHT 0xFFC4      //Define Huffman table(s)
 #define SOS 0xFFDA      //Start of scan
 
+#define APP1 0xFFE1     //exif data
+#define APP2 0xFFE2     //flash_pix data
+#define COM  0xFFFE     //comment
+
 #define DRI 0xFFDD      //Define Restart Interval
 
 enum {
@@ -315,9 +319,9 @@ int ParseJpegHeader(FileSource *fs, struct jpegParam *param)
     bool exit_flag = false;
     int offset = -1;
 
-    uint8_t *buf = (uint8_t*)malloc(4096);
-    fs->readAt(0, buf, 4096);
-    struct ABitReader abr(buf, 4096);
+    uint8_t *buf = (uint8_t*)malloc(64*1024);
+    fs->readAt(0, buf, 64*1024);
+    struct ABitReader abr(buf, 64*1024);
 
     uint16_t jpeg_tag = abr.getBits(16);
     if (jpeg_tag == SOI) {
@@ -350,6 +354,18 @@ int ParseJpegHeader(FileSource *fs, struct jpegParam *param)
                 exit_flag = true;
                 break;
             case EOI:
+                break;
+            case APP1:
+                printf("APP1 tag[%#x](%#x) at position[%#x], skip exif!\n", jpeg_tag, APP1, abr.getOffset());
+                abr.skipBits((abr.getBits(16)-2)*8);
+                break;
+            case APP2:
+                printf("APP2 tag[%#x] at position[%#x], skip flash_pix!\n", jpeg_tag, abr.getOffset());
+                abr.skipBits((abr.getBits(16)-2)*8);
+                break;
+            case COM:
+                printf("COM tag[%#x](%#x) at position[%#x], skip comment!\n", jpeg_tag, COM, abr.getOffset());
+                abr.skipBits((abr.getBits(16)-2)*8);
                 break;
             default:
                 printf("unknown tag[%#x] at position[%#x]\n", jpeg_tag, abr.getOffset());
