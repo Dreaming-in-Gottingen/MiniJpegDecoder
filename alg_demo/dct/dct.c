@@ -1,9 +1,9 @@
 //==============================================================================
 //  Copyright (C) 2020 zjz1988314. All rights reserved.
 //
-//  靠: zjz1988314
-//  靠: 靠DCT/IDCT靠
-//  靠: 2020-09-28
+//  author:   zjz1988314
+//  function: DCT/IDCT math formular verify
+//  time:     2020-09-28
 //
 //==============================================================================
 
@@ -13,9 +13,9 @@
 
 #define PI 3.1416
 //#define PI 3.1415926535
- 
+
 int MAT_SIZE;
- 
+
 float DctMap[100];     //输入矩阵，计算结束后为输出矩阵
 float DctMapRes[100];  //一维DCT结果
 float IDctMapRes[100]; //一维IDCT结果
@@ -26,14 +26,14 @@ void InitDctMap()
     for (int i=0; i<MAT_SIZE; i++)
         DctMap[i] = Tmp[i];
 }
- 
+
 void DCT()
 {
     float t, c;
     int i,j;
 
     for(i=0;i<MAT_SIZE;i++)
-	{
+    {
         if (i==0)
             c = sqrt(1.0/MAT_SIZE);
         else
@@ -41,7 +41,7 @@ void DCT()
 
         t=0;
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             t += c*DctMap[j]*cos(PI*i*(j+0.5)/MAT_SIZE); //核心算法
         }
         DctMapRes[i] = t;
@@ -54,49 +54,49 @@ void IDCT()
     int i,j;
 
     for(i=0;i<MAT_SIZE;i++)
-	{
+    {
         t=0;
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             c = (j==0) ? sqrt(1.0/MAT_SIZE): sqrt(2.0/MAT_SIZE);
             t += c*DctMapRes[j]*cos(PI*j*(i+0.5)/MAT_SIZE); //核心算法
         }
         IDctMapRes[i] = t;
     }
 }
- 
+
 int main(int argc, char *argv[])
 {
     if (argc != 2)
     {
         puts("error input for DCT/IDCT test!!! ");
-        puts("usage: cmd n(n<=8)");
+        puts("usage: cmd n(n in [1,100])");
         return -1;
     }
     puts("-------------------DCT/IDCT bgein--------------------");
 
-	MAT_SIZE = atoi(argv[1]); //定义矩阵维度
+    MAT_SIZE = atoi(argv[1]); //定义矩阵维度
 
     InitDctMap(); //初始化输入向量
 
     puts("-------------------raw matrix--------------------");
     for(int i=0;i<MAT_SIZE;i++)
     {
-        printf("%f\t", DctMap[i]); //输出DCT变换前数据
+        printf("%0.2f\t", DctMap[i]); //输出DCT变换前数据
     }
 
     DCT();
     puts("\n-----------------dct matrix--------------------");
     for(int i=0;i<MAT_SIZE;i++)
     {
-            printf("%f\t", DctMapRes[i]); //输出DCT变换结果
+            printf("%0.2f\t", DctMapRes[i]); //输出DCT变换结果
     }
 
     IDCT();
     puts("\n-----------------idct matrix--------------------");
     for(int i=0;i<MAT_SIZE;i++)
     {
-            printf("%f\t", IDctMapRes[i]); //输出IDCT变换结果
+            printf("%0.2f\t", IDctMapRes[i]); //输出IDCT变换结果
     }
     puts("\n-------------------------------------------------");
 

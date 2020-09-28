@@ -1,9 +1,9 @@
 //==============================================================================
 //  Copyright (C) 2020 zjz1988314. All rights reserved.
 //
-//  靠: zjz1988314
-//  靠: 靠DCT/IDCT靠
-//  靠: 2020-09-28
+//  author:   zjz1988314
+//  function: DCT2/IDCT2 math formular verify
+//  time:     2020-09-28
 //
 //==============================================================================
 
@@ -22,38 +22,39 @@ float DctMapTmp[100][100];  //矩阵运算时用的中间矩阵
 
 void InitTransMat()
 {
-//    int i,j;
-//	float a;
-//	
-//    for(i=0;i<MAT_SIZE;i++)
-//    {
-//        for(j=0;j<MAT_SIZE;j++)
-//        {
-//			a = 0;
-//			if(i==0)
-//			{
-//				a=sqrt((float)1/MAT_SIZE);
-//			}
-//			else
-//			{
-//				a=sqrt((float)2/MAT_SIZE);
-//			}
-//			DCT_Mat[i][j]= a*cos((j+0.5)*PI*i/MAT_SIZE); //变换矩阵
-//        }
-//    }
-    float Tmp[100][100] = {
-        {0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,},
-        {0.4904,    0.4157,    0.2778,    0.0975,   -0.0975,   -0.2778,   -0.4157,   -0.4904,},
-        {0.4619,    0.1913,   -0.1913,   -0.4619,   -0.4619,   -0.1913,    0.1913,    0.4619,},
-        {0.4157,   -0.0975,   -0.4904,   -0.2778,    0.2778,    0.4904,    0.0975,   -0.4157,},
-        {0.3536,   -0.3536,   -0.3536,    0.3536,    0.3536,   -0.3536,   -0.3536,    0.3536,},
-        {0.2778,   -0.4904,    0.0975,    0.4157,   -0.4157,   -0.0975,    0.4904,   -0.2778,},
-        {0.1913,   -0.4619,    0.4619,   -0.1913,   -0.1913,    0.4619,   -0.4619,    0.1913,},
-        {0.0975,   -0.2778,    0.4157,   -0.4904,    0.4904,   -0.4157,    0.2778,   -0.0975,},
-    };
-    for (int i=0; i<8; i++)
-        for (int j=0; j<8; j++)
-            DCT_Mat[i][j] = Tmp[i][j];
+    int i,j;
+    float a;
+
+    for(i=0;i<MAT_SIZE;i++)
+    {
+        for(j=0;j<MAT_SIZE;j++)
+        {
+            a = 0;
+            if(i==0)
+            {
+                a=sqrt((float)1/MAT_SIZE);
+            }
+            else
+            {
+                a=sqrt((float)2/MAT_SIZE);
+            }
+            DCT_Mat[i][j]= a*cos((j+0.5)*PI*i/MAT_SIZE); //变换矩阵
+        }
+    }
+    /* only for 8x8 */
+    //float Tmp[100][100] = {
+    //    {0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,    0.3536,},
+    //    {0.4904,    0.4157,    0.2778,    0.0975,   -0.0975,   -0.2778,   -0.4157,   -0.4904,},
+    //    {0.4619,    0.1913,   -0.1913,   -0.4619,   -0.4619,   -0.1913,    0.1913,    0.4619,},
+    //    {0.4157,   -0.0975,   -0.4904,   -0.2778,    0.2778,    0.4904,    0.0975,   -0.4157,},
+    //    {0.3536,   -0.3536,   -0.3536,    0.3536,    0.3536,   -0.3536,   -0.3536,    0.3536,},
+    //    {0.2778,   -0.4904,    0.0975,    0.4157,   -0.4157,   -0.0975,    0.4904,   -0.2778,},
+    //    {0.1913,   -0.4619,    0.4619,   -0.1913,   -0.1913,    0.4619,   -0.4619,    0.1913,},
+    //    {0.0975,   -0.2778,    0.4157,   -0.4904,    0.4904,   -0.4157,    0.2778,   -0.0975,},
+    //};
+    //for (int i=0; i<8; i++)
+    //    for (int j=0; j<8; j++)
+    //        DCT_Mat[i][j] = Tmp[i][j];
 }
  
 void DCT2()
@@ -61,26 +62,26 @@ void DCT2()
     float t=0;
     int i,j,k;
     for(i=0;i<MAT_SIZE;i++)  //相当于A*I
-	{
+    {
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             t=0;
             for(k=0;k<MAT_SIZE;k++)
-			{
+            {
                 t+=DCT_Mat[i][k]*DctMap[k][j]; //矩阵的乘法，DCT_Mat的第i行乘DctMap的第j列
-			}
+            }
             DctMapTmp[i][j]=t;
         }
     }
     for(i=0;i<MAT_SIZE;i++)  //相当于（A*I）后再*A‘
-	{
+    {
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             t=0;
             for(k=0;k<MAT_SIZE;k++)
-			{
+            {
                 t+=DctMapTmp[i][k]*DCT_Mat[j][k];
-			}
+            }
             DctMap[i][j]=t;
         }
     }
@@ -91,26 +92,26 @@ void IDCT2()
     float t=0;
     int i,j,k;
     for(i=0;i<MAT_SIZE;i++)  //相当于A'*I
-	{
+    {
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             t=0;
             for(k=0;k<MAT_SIZE;k++)
-			{
+            {
                 t+=DCT_Mat[k][i]*DctMap[k][j]; //矩阵的乘法，DCT_Mat的第i列乘DctMap的第j列
-			}
+            }
             DctMapTmp[i][j]=t;
         }
     }
     for(i=0;i<MAT_SIZE;i++)  //相当于（A*I）后再*A‘
-	{
+    {
         for(j=0;j<MAT_SIZE;j++)
-		{
+        {
             t=0;
             for(k=0;k<MAT_SIZE;k++)
-			{
+            {
                 t+=DctMapTmp[i][k]*DCT_Mat[k][j];
-			}
+            }
             DctMap[i][j]=t;
         }
     }
@@ -118,7 +119,7 @@ void IDCT2()
  
 void InitDctMap()
 {
-    float TmpDctMap[8][8] = {
+    float TmpDctMap[100][100] = {
         {84,    23,    40,    72,    70,    67,     5,    80},
         {37,    55,    41,    51,    48,   100,    57,     8},
         {62,    93,    66,    78,    11,    96,    70,    95},
@@ -128,8 +129,8 @@ void InitDctMap()
         {57,    63,    59,    98,    57,    26,    43,    87},
         {63,    70,    57,    81,    82,    60,    63,    51},
     };
-    for (int i=0; i<8; i++)
-        for (int j=0; j<8; j++)
+    for (int i=0; i<MAT_SIZE; i++)
+        for (int j=0; j<MAT_SIZE; j++)
             DctMap[i][j] = TmpDctMap[i][j];
 }
 
@@ -138,31 +139,21 @@ int main(int argc, char *argv[])
     if (argc != 2)
     {
         puts("error input for DCT2/IDCT2 test!!! ");
-        puts("usage: cmd n(n<=8)");
+        puts("usage: cmd n(n in [1,100])");
         return -1;
     }
     puts("-------------------DCT2/IDCT2 bgein--------------------");
 
-	MAT_SIZE = atoi(argv[1]); //定义矩阵维度
-	float k = 1;
-	int count = 1;
-	//for(int i=0;i<MAT_SIZE;i++)   //产生输入数据
-	//{
-	//	for(int j=0;j<MAT_SIZE;j++)
-	//	{
-	//		DctMap[i][j]=k + 50*cos(k*2*PI/40);
-	//		k++;
-	//	}
-	//}
+    MAT_SIZE = atoi(argv[1]); //定义矩阵维度
     InitDctMap();
     InitTransMat();
+
     puts("-----------------raw matrix--------------------");
     for(int i=0;i<MAT_SIZE;i++)
     {
         for(int j=0;j<MAT_SIZE;j++)
         {
-            printf("%f\t", DctMap[i][j]); //输出DCT变换结果
-			count++;
+            printf("%0.2f\t", DctMap[i][j]); //输出DCT变换结果
         }
         puts("");
     }
@@ -173,8 +164,7 @@ int main(int argc, char *argv[])
     {
         for(int j=0;j<MAT_SIZE;j++)
         {
-            printf("%f\t", DctMap[i][j]); //输出DCT变换结果
-			count++;
+            printf("%0.2f\t", DctMap[i][j]); //输出DCT变换结果
         }
         puts("");
     }
@@ -185,8 +175,7 @@ int main(int argc, char *argv[])
     {
         for(int j=0;j<MAT_SIZE;j++)
         {
-            printf("%f\t", DctMap[i][j]); //输出DCT变换结果
-			count++;
+            printf("%0.2f\t", DctMap[i][j]); //输出DCT变换结果
         }
         puts("");
     }
