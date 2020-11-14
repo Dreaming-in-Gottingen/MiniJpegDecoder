@@ -1,27 +1,30 @@
-CC = g++
+CXX = g++
 
-SOURCE_ROOT = $(shell pwd)
+#SOURCE_ROOT = $(shell pwd)
 
-CFLAGS		:= -Wall -O2 -fno-buildin
-CPPFLAGS	:=
-INCLUDE 	:= -I ../include
-LIBVAR		:= libcodec_utils.so
-TARGET      := JpegDecoder
+CFLAGS      := -Wall -O2 -fno-buildin
+CPPFLAGS    :=
+INCLUDE     := -I ../include
+#linux platform
+#LD_LIBS     := -L../libs -lcodec_utils
+#windows platform
+LD_LIBS     := -L../libs libcodec_utils.so
 
-all: $(TARGET)
-SRCS += JpegDecoder.cpp
+TARGET_BIN  := JpegDecoder
 
-OBJS = $(patsubst %.cpp, %.o, $(SRCS))
+SRCS    := JpegDecoder.cpp
+OBJS    := $(SRCS:%.cpp=%.o)
+#OBJS    := $(patsubst %.cpp, %.o, $(SRCS))
 
-#OBJ_C = $(foreach file, $(OBJS), $(file))
+all:$(TARGET_BIN)
 
-$(OBJS): %.o:%.cpp
-	$(CC) $(INCLUDE) $(CPPFLAGS) -c $(SRCS) -o $(OBJS)
+$(TARGET_BIN): $(OBJS)
+	$(CXX) -o $@ $^ $(LD_LIBS)
 
-$(TARGET): $(OBJS)
-	$(CC) -o $(TARGET) $(LIBVAR) $(OBJS)
+$(OBJS): $(SRCS)
+	$(CXX) $(INCLUDE) $(CPPFLAGS) -fPIC -c $^ -o $@
 
 clean:
-	@rm -f *.o $(TARGET)
+	@rm -f *.o $(TARGET_BIN)
 
 .PHONY: clean

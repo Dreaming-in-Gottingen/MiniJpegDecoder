@@ -1,29 +1,30 @@
-CC = g++
+CXX = g++
 
-SOURCE_ROOT = $(shell pwd)
+#SOURCE_ROOT = $(shell pwd)
 
-CFLAGS		:= -Wall -O2 -fno-buildin
-CPPFLAGS 	:= -D_FILE_OFFSET_BITS=64 -D_LARGE_FILE
-INCLUDE 	:= ../include
-TARGET 		:= libcodec_utils.so
-LIBPATH 	:= ../libs
+CFLAGS     := -Wall -O2 -fno-buildin
+CPPFLAGS   := -D_FILE_OFFSET_BITS=64 -D_LARGE_FILE
+INCLUDE    := ../include
+TARGET_LIB := libcodec_utils.so
+DST_PATH   := ../libs
 
-all: $(TARGET)
-SRCS += AString.cpp ABitReader.cpp DataSource.cpp FileSource.cpp types_def.cpp
+#SRCS = AString.cpp ABitReader.cpp DataSource.cpp FileSource.cpp types_def.cpp
+#OBJS = $(patsubst %.cpp, %.o, $(SRCS))
 
-OBJS = $(patsubst %.cpp, %.o, $(SRCS))
+SRCS := $(wildcard *.cpp)
+OBJS := $(SRCS:%.cpp=%.o)
 
-#OBJ_C = $(foreach file, $(OBJS), $(file))
+$(TARGET_LIB): $(OBJS)
+	$(CXX) $(CPPFLAGS) -shared -o $@ $^
 
-$(OBJS): %.o:%.cpp
-	$(CC) -I $(INCLUDE) $(CPPFLAGS) -c $(SRCS)
-
-$(TARGET): $(OBJS)
-	$(CC) -shared -o $(TARGET) $(OBJS)
-	mkdir -p $(LIBPATH)
-	mv $(TARGET) $(LIBPATH)
+$(OBJS): $(SRCS)
+	$(CXX) -I $(INCLUDE) $(CPPFLAGS) -fPIC -c $^
 
 clean:
-	@rm -rf *.o $(LIBPATH)
+	@rm -rf *.o $(TARGET_LIB)
+
+install:
+	@mkdir -p $(DST_PATH)
+	@cp $(TARGET_LIB) $(DST_PATH)
 
 .PHONY: clean
