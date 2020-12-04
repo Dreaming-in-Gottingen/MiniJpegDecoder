@@ -41,7 +41,7 @@ namespace codec_utils {
 #define CHECK(condition)                                \
     do {                                                \
         if (!(condition)) {                             \
-            printf("%s:" LITERAL_TO_STRING(__LINE__)    \
+            printf(__FILE__ ":" LITERAL_TO_STRING(__LINE__)    \
                     " CHECK(" #condition ") failed.");  \
             assert(0);                                  \
         }                                               \
